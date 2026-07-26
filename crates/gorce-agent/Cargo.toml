@@ -1,0 +1,16 @@
+[package]
+name = "gorce-agent"
+description = "Agent contracts for Gorce"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gorce-core = { path = "../gorce-core" }
+gorce-protocol = { path = "../gorce-protocol" }
+gorce-store = { path = "../gorce-store" }
+
+[lints]
+workspace = true

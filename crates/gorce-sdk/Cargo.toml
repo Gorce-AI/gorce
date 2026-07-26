@@ -1,0 +1,14 @@
+[package]
+name = "gorce-sdk"
+description = "Client SDK contracts for Gorce"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gorce-protocol = { path = "../gorce-protocol" }
+
+[lints]
+workspace = true

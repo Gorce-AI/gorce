@@ -1,0 +1,16 @@
+name: Release placeholder
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain release status
+        run: |
+          echo "Release automation is reserved for a future runtime release."
+          echo "No artifacts are published by this workflow."
