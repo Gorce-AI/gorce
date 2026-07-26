@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/attachment.schema.json",
+  "title": "Attachment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "blob", "filename", "media_type", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "blob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "size_bytes", "media_type"],
+      "properties": {
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "media_type": { "type": "string", "minLength": 1 },
+        "filename": { "type": "string", "minLength": 1 }
+      }
+    },
+    "filename": { "type": "string", "minLength": 1 },
+    "media_type": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

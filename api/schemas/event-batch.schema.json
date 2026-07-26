@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/event-batch.schema.json",
+  "title": "EventBatch",
+  "description": "Canonical persisted event batch for v0. A batch must have at least one event, contiguous zero-based ordinals, and a valid command idempotency key. batch_id is a UUIDv7 immutable identifier that must be unique across all accepted persisted batches; it must never be reused for a different command. A retry with the same idempotency_key and the same command payload returns the original accepted batch without appending another batch. Reuse of an idempotency_key with a different command payload is rejected as a conflict. The deterministic command payload digest input is the UTF-8 canonical JSON serialization of {\"arguments\": <arguments>, \"name\": <name>} with object members sorted lexicographically; idempotency_key is not part of that payload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "project_id", "batch_id", "batch_sequence", "committed_at", "actor", "command", "base_revisions", "events", "referenced_blobs"],
+  "properties": {
+    "format": { "const": "gorce.event-batch/v1" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "batch_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+      "description": "Globally unique, immutable UUIDv7 identifier for this accepted batch."
+    },
+    "batch_sequence": { "type": "integer", "minimum": 1 },
+    "committed_at": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64,
+      "description": "RFC 3339 timestamp for the persisted batch."
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["human", "agent", "service", "system"] },
+        "operator_id": { "type": ["string", "null"], "format": "uuid" }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "arguments", "idempotency_key"],
+      "description": "Canonical command metadata. The same idempotency key and same command payload is an idempotent replay; the same key with a different payload is a conflict.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "arguments": {
+          "description": "JSON command arguments. Its canonical serialized form is part of the command payload digest input.",
+          "x-maxSerializedBytes": 1048576
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "base_revisions": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1024,
+      "description": "Events are persisted in ordinal order. Ordinals must be exactly 0 through N-1.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ordinal", "type", "schema_version", "data"],
+        "properties": {
+          "ordinal": { "type": "integer", "minimum": 0, "maximum": 1023 },
+          "type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_.-]*$"
+          },
+          "schema_version": { "type": "integer", "minimum": 1 },
+          "data": {
+            "x-maxSerializedBytes": 1048576
+          }
+        }
+      },
+      "x-maxTotalSerializedBytes": 8388608
+    },
+    "referenced_blobs": {
+      "type": "array",
+      "maxItems": 1024,
+      "uniqueItems": true,
+      "description": "Authoritative manifest of every BlobRef used by typed event payloads. Every payload BlobRef must be declared here, and every entry is validated before append. Contract validation does not infer references by recursively scanning arbitrary JSON.",
+      "items": {
+        "$ref": "https://gorce.dev/schemas/blob-ref.schema.json"
+      }
+    }
+  },
+  "examples": [
+    {
+      "format": "gorce.event-batch/v1",
+      "project_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+      "batch_id": "018f0f5e-7b12-7abd-8def-0123456789ab",
+      "batch_sequence": 1,
+      "committed_at": "2026-01-01T00:00:00Z",
+      "actor": { "kind": "system" },
+      "command": {
+        "name": "task.create",
+        "arguments": {},
+        "idempotency_key": "idem_01hqz7b4m9r7"
+      },
+      "base_revisions": { "project": 4 },
+      "events": [
+        {
+          "ordinal": 0,
+          "type": "task.created",
+          "schema_version": 1,
+          "data": { "task_id": "018f0f5e-7b12-7abe-8def-0123456789ab" }
+        }
+      ],
+      "referenced_blobs": []
+    }
+  ]
+}

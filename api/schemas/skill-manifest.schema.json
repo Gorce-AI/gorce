@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/skill-manifest.schema.json",
+  "title": "SkillManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "operator_id", "name", "version", "skills", "capabilities", "updated_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "operator_id": { "type": "string", "format": "uuid" },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "minLength": 1 },
+    "skills": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "capabilities": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "digest": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

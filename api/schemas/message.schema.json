@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/message.schema.json",
+  "title": "Message",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "sender_operator_id", "role", "parts", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "sender_operator_id": { "type": "string", "format": "uuid" },
+    "role": { "type": "string", "enum": ["user", "operator", "assistant", "system", "tool"] },
+    "parts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "text"],
+            "properties": {
+              "kind": { "const": "text" },
+              "text": { "type": "string" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "blob"],
+            "properties": {
+              "kind": { "const": "blob" },
+              "blob": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["digest", "size_bytes", "media_type"],
+                "properties": {
+                  "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+                  "size_bytes": { "type": "integer", "minimum": 0 },
+                  "media_type": { "type": "string", "minLength": 1 },
+                  "filename": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "name", "arguments"],
+            "properties": {
+              "kind": { "const": "tool_call" },
+              "name": { "type": "string", "minLength": 1 },
+              "arguments": {}
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "call_id", "output"],
+            "properties": {
+              "kind": { "const": "tool_result" },
+              "call_id": { "type": "string", "minLength": 1 },
+              "output": {}
+            }
+          }
+        ]
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

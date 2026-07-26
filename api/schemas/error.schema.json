@@ -8,7 +8,17 @@
   "properties": {
     "code": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_.-]*$"
+      "enum": [
+        "invalid_request",
+        "unauthorized",
+        "forbidden",
+        "not_found",
+        "conflict",
+        "precondition_failed",
+        "rate_limited",
+        "service_not_ready",
+        "internal"
+      ]
     },
     "message": {
       "type": "string",
@@ -17,12 +27,14 @@
     "request_id": {
       "type": "string",
       "minLength": 1
-    }
+    },
+    "details": {}
   },
   "examples": [
     {
-      "code": "service_not_ready",
-      "message": "The service is not ready."
+      "code": "invalid_request",
+      "message": "The request body is invalid.",
+      "request_id": "req_01hqz7b4m9r7"
     }
   ]
 }

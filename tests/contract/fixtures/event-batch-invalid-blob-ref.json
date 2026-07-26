@@ -1,0 +1,16 @@
+{
+  "format": "gorce.event-batch/v1",
+  "project_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+  "batch_id": "018f0f5e-7b12-7abd-8def-0123456789ab",
+  "batch_sequence": 1,
+  "committed_at": "2026-01-01T00:00:00Z",
+  "actor": { "kind": "system" },
+  "command": { "name": "task.create", "arguments": {}, "idempotency_key": "idem_1" },
+  "base_revisions": {},
+  "events": [
+    { "ordinal": 0, "type": "task.created", "schema_version": 1, "data": {} }
+  ],
+  "referenced_blobs": [
+    { "digest": "not-a-sha256-digest", "size_bytes": 42, "media_type": "text/plain" }
+  ]
+}

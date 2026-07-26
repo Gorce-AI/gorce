@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/message-part.schema.json",
+  "title": "MessagePart",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "text"],
+      "properties": {
+        "kind": { "const": "text" },
+        "text": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "blob"],
+      "properties": {
+        "kind": { "const": "blob" },
+        "blob": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["digest", "size_bytes", "media_type"],
+          "properties": {
+            "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "size_bytes": { "type": "integer", "minimum": 0 },
+            "media_type": { "type": "string", "minLength": 1 },
+            "filename": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "arguments"],
+      "properties": {
+        "kind": { "const": "tool_call" },
+        "name": { "type": "string", "minLength": 1 },
+        "arguments": {}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "call_id", "output"],
+      "properties": {
+        "kind": { "const": "tool_result" },
+        "call_id": { "type": "string", "minLength": 1 },
+        "output": {}
+      }
+    }
+  ]
+}

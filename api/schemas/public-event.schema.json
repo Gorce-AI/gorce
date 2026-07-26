@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/public-event.schema.json",
+  "title": "PublicEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "sequence", "event_type", "occurred_at", "payload"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "event_type": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "payload": { "type": "object" }
+  },
+  "examples": [
+    {
+      "id": "018f0f5e-7b12-7abf-8def-0123456789ab",
+      "project_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+      "sequence": 1,
+      "event_type": "task.created",
+      "occurred_at": "2026-01-01T00:00:00Z",
+      "payload": { "task_id": "018f0f5e-7b12-7abd-8def-0123456789ab" }
+    }
+  ]
+}

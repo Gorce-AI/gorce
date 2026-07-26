@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/blob-ref.schema.json",
+  "title": "BlobRef",
+  "description": "A content-addressed blob reference. digest, size_bytes, and media_type are mandatory and are checked before a canonical event batch is appended.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["digest", "size_bytes", "media_type"],
+  "properties": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "minLength": 71,
+      "maxLength": 71
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1073741824
+    },
+    "media_type": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "filename": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    }
+  },
+  "examples": [
+    {
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size_bytes": 42,
+      "media_type": "text/plain",
+      "filename": "notes.txt"
+    }
+  ]
+}

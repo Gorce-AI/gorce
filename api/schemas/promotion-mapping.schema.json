@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/promotion-mapping.schema.json",
+  "title": "PromotionMapping",
+  "description": "Explicit promotion disposition for every planned item, including unfinished KEEP items.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["plan_item_id", "disposition"],
+  "properties": {
+    "plan_item_id": { "type": "string", "format": "uuid" },
+    "disposition": { "type": "string", "enum": ["CREATE", "REUSE", "REVISE", "KEEP"] },
+    "task_id": { "type": ["string", "null"], "format": "uuid" },
+    "source_revision_id": { "type": ["string", "null"], "format": "uuid" },
+    "target_revision_id": { "type": ["string", "null"], "format": "uuid" },
+    "reason": { "type": ["string", "null"], "minLength": 1 }
+  },
+  "oneOf": [
+    { "properties": { "disposition": { "const": "CREATE" } } },
+    {
+      "required": ["task_id"],
+      "properties": {
+        "disposition": { "const": "REUSE" },
+        "task_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    {
+      "required": ["task_id", "source_revision_id"],
+      "properties": {
+        "disposition": { "const": "REVISE" },
+        "task_id": { "type": "string", "format": "uuid" },
+        "source_revision_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    {
+      "required": ["task_id"],
+      "properties": {
+        "disposition": { "const": "KEEP" },
+        "task_id": { "type": "string", "format": "uuid" }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "plan_item_id": "018f0f5e-7b12-7ac0-8def-0123456789ab",
+      "disposition": "KEEP",
+      "task_id": "018f0f5e-7b12-7abd-8def-0123456789ab",
+      "reason": "Unfinished task remains in the next plan unchanged."
+    }
+  ]
+}

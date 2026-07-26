@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/lease.schema.json",
+  "title": "Lease",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "task_id", "holder_operator_id", "acquired_at", "expires_at", "fencing_token"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "task_id": { "type": "string", "format": "uuid" },
+    "holder_operator_id": { "type": "string", "format": "uuid" },
+    "acquired_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "fencing_token": { "type": "integer", "minimum": 0 }
+  }
+}

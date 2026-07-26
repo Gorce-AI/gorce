@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/task-lifecycle.schema.json",
+  "title": "TaskLifecycle",
+  "type": "string",
+  "enum": ["open", "waiting", "deferred", "completed", "cancelled", "superseded"]
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/task-readiness.schema.json",
+  "title": "TaskReadiness",
+  "description": "Derived readiness projection; it is not task lifecycle state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "blocker_task_ids", "evaluated_at"],
+  "properties": {
+    "status": { "type": "string", "enum": ["ready", "blocked", "unknown"] },
+    "blocker_task_ids": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "evaluated_at": { "type": "string", "format": "date-time" }
+  }
+}

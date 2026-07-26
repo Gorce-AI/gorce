@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/goal-link.schema.json",
+  "title": "GoalLink",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["goal_id", "goal_revision_id", "relation"],
+  "properties": {
+    "goal_id": { "type": "string", "format": "uuid" },
+    "goal_revision_id": { "type": "string", "format": "uuid" },
+    "relation": { "type": "string", "enum": ["supports", "derived_from", "validates"] }
+  }
+}

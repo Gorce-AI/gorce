@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/evidence-bundle.schema.json",
+  "title": "EvidenceBundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "task_id", "attempt_id", "items", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "task_id": { "type": "string", "format": "uuid" },
+    "attempt_id": { "type": "string", "format": "uuid" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "summary"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["test_result", "log", "screenshot", "note", "artifact"] },
+          "summary": { "type": "string", "minLength": 1 },
+          "blob": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["digest", "size_bytes", "media_type"],
+            "properties": {
+              "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+              "size_bytes": { "type": "integer", "minimum": 0 },
+              "media_type": { "type": "string", "minLength": 1 },
+              "filename": { "type": ["string", "null"], "minLength": 1 }
+            }
+          },
+          "uri": { "type": ["string", "null"], "format": "uri" }
+        },
+        "anyOf": [
+          { "required": ["blob"] },
+          { "required": ["uri"] }
+        ]
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

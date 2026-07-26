@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/task-revision.schema.json",
+  "title": "TaskRevision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "task_id", "revision", "title", "acceptance_criteria", "goal_links", "revision_hash", "created_by", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "task_id": { "type": "string", "format": "uuid" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "description": { "type": ["string", "null"] },
+    "acceptance_criteria": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "goal_links": {
+      "type": "array",
+      "items": { "$ref": "https://gorce.dev/schemas/goal-link.schema.json" }
+    },
+    "revision_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "created_by": { "type": "string", "format": "uuid" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
