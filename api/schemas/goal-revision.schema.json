@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/goal-revision.schema.json",
+  "title": "GoalRevision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "goal_id", "project_id", "revision", "title", "statement", "revision_hash", "status", "created_by", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "goal_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "workstream_id": { "type": ["string", "null"], "format": "uuid" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "statement": { "type": "string", "minLength": 1 },
+    "revision_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "status": { "type": "string", "enum": ["draft", "proposed", "approved", "superseded"] },
+    "created_by": { "type": "string", "format": "uuid" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

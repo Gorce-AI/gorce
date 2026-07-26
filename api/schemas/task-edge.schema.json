@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/task-edge.schema.json",
+  "title": "TaskEdge",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "from_task_id", "to_task_id", "kind", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "from_task_id": { "type": "string", "format": "uuid" },
+    "to_task_id": { "type": "string", "format": "uuid" },
+    "kind": {
+      "type": "string",
+      "enum": ["parent", "dependency", "supersedes"],
+      "description": "parent makes from_task_id the parent of to_task_id; dependency makes from_task_id depend on to_task_id; supersedes marks the source task as replaced by the target task."
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

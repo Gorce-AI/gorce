@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/task.schema.json",
+  "title": "Task",
+  "description": "Stable task identity with projected lifecycle and readiness.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "lifecycle", "readiness", "created_at", "updated_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "workstream_id": { "type": ["string", "null"], "format": "uuid" },
+    "lifecycle": { "$ref": "https://gorce.dev/schemas/task-lifecycle.schema.json" },
+    "readiness": { "$ref": "https://gorce.dev/schemas/task-readiness.schema.json" },
+    "current_revision_id": { "type": ["string", "null"], "format": "uuid" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  },
+  "examples": [
+    {
+      "id": "018f0f5e-7b12-7abd-8def-0123456789ab",
+      "project_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+      "workstream_id": null,
+      "lifecycle": "open",
+      "readiness": {
+        "status": "ready",
+        "blocker_task_ids": [],
+        "evaluated_at": "2026-01-01T00:00:00Z"
+      },
+      "current_revision_id": "018f0f5e-7b12-7abe-8def-0123456789ab",
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z"
+    }
+  ]
+}

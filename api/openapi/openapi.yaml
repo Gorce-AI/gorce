@@ -2,37 +2,772 @@ openapi: 3.1.0
 info:
   title: Gorce API
   version: 0.1.0
-  description: Placeholder contract for the Gorce daemon API.
+  description: Version-zero contract for project work coordination and public events.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
 servers:
   - url: http://127.0.0.1:8787
     description: Local development server
+tags:
+  - name: system
+  - name: planning
+  - name: execution
+  - name: operators
+  - name: communication
+  - name: events
 paths:
-  /health:
+  /v0/health:
     get:
+      tags: [system]
       operationId: getHealth
       summary: Report service health
       responses:
         '200':
-          description: Service health
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Health'
-              example:
-                status: ok
-                version: 0.1.0
+          $ref: '#/components/responses/Health'
         '503':
-          description: Service is not ready
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v0/projects:
+    get:
+      tags: [planning]
+      operationId: listProjects
+      summary: List projects
+      responses:
+        '200':
+          description: Projects
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                type: array
+                items:
+                  $ref: '../schemas/project.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [planning]
+      operationId: createProject
+      summary: Create a project
+      requestBody:
+        $ref: '#/components/requestBodies/Project'
+      responses:
+        '201':
+          $ref: '#/components/responses/Project'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [planning]
+      operationId: getProject
+      summary: Get a project
+      responses:
+        '200':
+          $ref: '#/components/responses/Project'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/workstreams:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [planning]
+      operationId: listWorkstreams
+      summary: List workstreams
+      responses:
+        '200':
+          description: Workstreams
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../schemas/workstream.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [planning]
+      operationId: createWorkstream
+      summary: Create a workstream
+      requestBody:
+        $ref: '#/components/requestBodies/Workstream'
+      responses:
+        '201':
+          $ref: '#/components/responses/Workstream'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/goals/revisions:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [planning]
+      operationId: listGoalRevisions
+      summary: List goal revisions
+      responses:
+        '200':
+          description: Goal revisions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../schemas/goal-revision.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [planning]
+      operationId: createGoalRevision
+      summary: Create a goal revision
+      requestBody:
+        $ref: '#/components/requestBodies/GoalRevision'
+      responses:
+        '201':
+          $ref: '#/components/responses/GoalRevision'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/plans/revisions:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [planning]
+      operationId: listPlanRevisions
+      summary: List plan revisions
+      responses:
+        '200':
+          description: Plan revisions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../schemas/plan-revision.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [planning]
+      operationId: createPlanRevision
+      summary: Create a plan revision
+      requestBody:
+        $ref: '#/components/requestBodies/PlanRevision'
+      responses:
+        '201':
+          $ref: '#/components/responses/PlanRevision'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [execution]
+      operationId: listTasks
+      summary: List tasks
+      responses:
+        '200':
+          description: Tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../schemas/task.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [execution]
+      operationId: createTask
+      summary: Create a task
+      requestBody:
+        $ref: '#/components/requestBodies/Task'
+      responses:
+        '201':
+          $ref: '#/components/responses/Task'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/tasks/{task_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      tags: [execution]
+      operationId: getTask
+      summary: Get a task
+      responses:
+        '200':
+          $ref: '#/components/responses/Task'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/tasks/{task_id}/revisions:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      tags: [execution]
+      operationId: listTaskRevisions
+      summary: List task revisions
+      responses:
+        '200':
+          description: Task revisions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../schemas/task-revision.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [execution]
+      operationId: createTaskRevision
+      summary: Create a task revision
+      requestBody:
+        $ref: '#/components/requestBodies/TaskRevision'
+      responses:
+        '201':
+          $ref: '#/components/responses/TaskRevision'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/task-edges:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [execution]
+      operationId: listTaskEdges
+      summary: List task edges
+      responses:
+        '200':
+          description: Task edges
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../schemas/task-edge.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [execution]
+      operationId: createTaskEdge
+      summary: Create a task edge
+      requestBody:
+        $ref: '#/components/requestBodies/TaskEdge'
+      responses:
+        '201':
+          $ref: '#/components/responses/TaskEdge'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/task-attempts:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [execution]
+      operationId: listTaskAttempts
+      summary: List task attempts
+      responses:
+        '200':
+          description: Task attempts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../schemas/task-attempt.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [execution]
+      operationId: createTaskAttempt
+      summary: Start a task attempt
+      requestBody:
+        $ref: '#/components/requestBodies/TaskAttempt'
+      responses:
+        '201':
+          $ref: '#/components/responses/TaskAttempt'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/leases:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [execution]
+      operationId: listLeases
+      summary: List active leases
+      responses:
+        '200':
+          description: Leases
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../schemas/lease.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [execution]
+      operationId: acquireLease
+      summary: Acquire a lease
+      requestBody:
+        $ref: '#/components/requestBodies/Lease'
+      responses:
+        '201':
+          $ref: '#/components/responses/Lease'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/operators:
+    get:
+      tags: [operators]
+      operationId: listOperators
+      summary: List operators
+      responses:
+        '200':
+          description: Operator profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../schemas/operator-profile.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/operators/{operator_id}/skill-manifests:
+    parameters:
+      - $ref: '#/components/parameters/OperatorId'
+    get:
+      tags: [operators]
+      operationId: listSkillManifests
+      summary: List skill manifests
+      responses:
+        '200':
+          description: Skill manifests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../schemas/skill-manifest.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/permission-requests:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [operators]
+      operationId: listPermissionRequests
+      summary: List permission requests
+      responses:
+        '200':
+          description: Permission requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../schemas/permission-request.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [operators]
+      operationId: createPermissionRequest
+      summary: Request permission
+      requestBody:
+        $ref: '#/components/requestBodies/PermissionRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/PermissionRequest'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/context-bundles:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [communication]
+      operationId: createContextBundle
+      summary: Create a context bundle
+      requestBody:
+        $ref: '#/components/requestBodies/ContextBundle'
+      responses:
+        '201':
+          $ref: '#/components/responses/ContextBundle'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/evidence-bundles:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [communication]
+      operationId: createEvidenceBundle
+      summary: Create an evidence bundle
+      requestBody:
+        $ref: '#/components/requestBodies/EvidenceBundle'
+      responses:
+        '201':
+          $ref: '#/components/responses/EvidenceBundle'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/attachments:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [communication]
+      operationId: createAttachment
+      summary: Register an attachment
+      requestBody:
+        $ref: '#/components/requestBodies/Attachment'
+      responses:
+        '201':
+          $ref: '#/components/responses/Attachment'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/messages:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [communication]
+      operationId: listMessages
+      summary: List messages
+      responses:
+        '200':
+          description: Messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../schemas/message.schema.json'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [communication]
+      operationId: createMessage
+      summary: Create a message
+      requestBody:
+        $ref: '#/components/requestBodies/Message'
+      responses:
+        '201':
+          $ref: '#/components/responses/Message'
+        default:
+          $ref: '#/components/responses/Error'
+  /v0/projects/{project_id}/events:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/EventCursor'
+    get:
+      tags: [events]
+      operationId: listPublicEvents
+      summary: Read the public event stream
+      description: Events are ordered by sequence. The cursor is opaque and must be reused verbatim.
+      parameters:
+        - $ref: '#/components/parameters/EventLimit'
+      responses:
+        '200':
+          $ref: '#/components/responses/PublicEventBatch'
+        default:
+          $ref: '#/components/responses/Error'
 components:
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+        description: UUID project identifier.
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+        description: UUID task identifier.
+    OperatorId:
+      name: operator_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+        description: UUID operator identifier.
+    EventCursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        $ref: '../schemas/public-event-cursor.schema.json'
+    EventLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+  requestBodies:
+    Project:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/project.schema.json'
+    Workstream:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/workstream.schema.json'
+    GoalRevision:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/goal-revision.schema.json'
+    PlanRevision:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/plan-revision.schema.json'
+    Task:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/task.schema.json'
+    TaskRevision:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/task-revision.schema.json'
+    TaskEdge:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/task-edge.schema.json'
+    TaskAttempt:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/task-attempt.schema.json'
+    Lease:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/lease.schema.json'
+    PermissionRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/permission-request.schema.json'
+    ContextBundle:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/context-bundle.schema.json'
+    EvidenceBundle:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/evidence-bundle.schema.json'
+    Attachment:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/attachment.schema.json'
+    Message:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/message.schema.json'
+  responses:
+    Health:
+      description: Service health
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/health.schema.json'
+          example:
+            status: ok
+            version: 0.1.0
+    ServiceUnavailable:
+      description: Service is not ready
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/error.schema.json'
+    Error:
+      description: A typed API error
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/error.schema.json'
+    Project:
+      description: Project
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/project.schema.json'
+    Workstream:
+      description: Workstream
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/workstream.schema.json'
+    GoalRevision:
+      description: Goal revision
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/goal-revision.schema.json'
+    PlanRevision:
+      description: Plan revision
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/plan-revision.schema.json'
+    Task:
+      description: Task
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/task.schema.json'
+    TaskRevision:
+      description: Task revision
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/task-revision.schema.json'
+    TaskEdge:
+      description: Task edge
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/task-edge.schema.json'
+    TaskAttempt:
+      description: Task attempt
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/task-attempt.schema.json'
+    Lease:
+      description: Lease
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/lease.schema.json'
+    PermissionRequest:
+      description: Permission request
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/permission-request.schema.json'
+    ContextBundle:
+      description: Context bundle
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/context-bundle.schema.json'
+    EvidenceBundle:
+      description: Evidence bundle
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/evidence-bundle.schema.json'
+    Attachment:
+      description: Attachment
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/attachment.schema.json'
+    Message:
+      description: Message
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/message.schema.json'
+    EventBatch:
+      description: A canonical persisted event batch
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/event-batch.schema.json'
+    PublicEventBatch:
+      description: A page of public events
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/public-event-batch.schema.json'
   schemas:
     Health:
       $ref: '../schemas/health.schema.json'
     Error:
       $ref: '../schemas/error.schema.json'
+    TypedError:
+      $ref: '../schemas/error.schema.json'
+    BlobRef:
+      $ref: '../schemas/blob-ref.schema.json'
+    Project:
+      $ref: '../schemas/project.schema.json'
+    Workstream:
+      $ref: '../schemas/workstream.schema.json'
+    GoalRevision:
+      $ref: '../schemas/goal-revision.schema.json'
+    PlanRevision:
+      $ref: '../schemas/plan-revision.schema.json'
+    GoalLink:
+      $ref: '../schemas/goal-link.schema.json'
+    PlanItem:
+      $ref: '../schemas/plan-item.schema.json'
+    PromotionMapping:
+      $ref: '../schemas/promotion-mapping.schema.json'
+    Task:
+      $ref: '../schemas/task.schema.json'
+    TaskLifecycle:
+      $ref: '../schemas/task-lifecycle.schema.json'
+    TaskReadiness:
+      $ref: '../schemas/task-readiness.schema.json'
+    TaskRevision:
+      $ref: '../schemas/task-revision.schema.json'
+    TaskEdge:
+      $ref: '../schemas/task-edge.schema.json'
+    TaskAttempt:
+      $ref: '../schemas/task-attempt.schema.json'
+    Lease:
+      $ref: '../schemas/lease.schema.json'
+    OperatorProfile:
+      $ref: '../schemas/operator-profile.schema.json'
+    SkillManifest:
+      $ref: '../schemas/skill-manifest.schema.json'
+    PermissionRequest:
+      $ref: '../schemas/permission-request.schema.json'
+    ContextBundle:
+      $ref: '../schemas/context-bundle.schema.json'
+    EvidenceBundle:
+      $ref: '../schemas/evidence-bundle.schema.json'
+    Attachment:
+      $ref: '../schemas/attachment.schema.json'
+    Message:
+      $ref: '../schemas/message.schema.json'
+    MessagePart:
+      $ref: '../schemas/message-part.schema.json'
+    PublicEventCursor:
+      $ref: '../schemas/public-event-cursor.schema.json'
+    PublicEvent:
+      $ref: '../schemas/public-event.schema.json'
+    EventBatch:
+      $ref: '../schemas/event-batch.schema.json'
+    PublicEventBatch:
+      $ref: '../schemas/public-event-batch.schema.json'
+    ApiError:
+      $ref: '../schemas/error.schema.json'
+    UUIDv7:
+      $ref: '../schemas/uuidv7.schema.json'

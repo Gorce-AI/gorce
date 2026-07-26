@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/plan-revision.schema.json",
+  "title": "PlanRevision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "plan_id", "project_id", "goal_revision_id", "revision", "revision_hash", "summary", "items", "promotion_mappings", "status", "created_by", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "plan_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "goal_revision_id": { "type": "string", "format": "uuid" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "revision_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "summary": { "type": "string", "minLength": 1 },
+    "items": {
+      "type": "array",
+      "items": { "$ref": "https://gorce.dev/schemas/plan-item.schema.json" }
+    },
+    "promotion_mappings": {
+      "type": "array",
+      "items": { "$ref": "https://gorce.dev/schemas/promotion-mapping.schema.json" }
+    },
+    "status": { "type": "string", "enum": ["draft", "proposed", "approved", "superseded"] },
+    "created_by": { "type": "string", "format": "uuid" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

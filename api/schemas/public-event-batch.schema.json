@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/public-event-batch.schema.json",
+  "title": "PublicEventBatch",
+  "description": "Paginated public event read response.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["cursor", "events", "has_more"],
+  "properties": {
+    "cursor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "https://gorce.dev/schemas/public-event.schema.json"
+      }
+    },
+    "next_cursor": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "has_more": { "type": "boolean" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "has_more": { "const": true } } },
+      "then": { "required": ["next_cursor"] }
+    }
+  ],
+  "examples": [
+    {
+      "cursor": "eyJzZXF1ZW5jZSI6MX0",
+      "events": [
+        {
+          "id": "018f0f5e-7b12-7abf-8def-0123456789ab",
+          "project_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+          "sequence": 1,
+          "event_type": "task.created",
+          "occurred_at": "2026-01-01T00:00:00Z",
+          "payload": { "task_id": "018f0f5e-7b12-7abe-8def-0123456789ab" }
+        }
+      ],
+      "next_cursor": "eyJzZXF1ZW5jZSI6Mn0",
+      "has_more": true
+    }
+  ]
+}

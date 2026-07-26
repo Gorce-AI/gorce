@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/event-batch.schema.json",
+  "title": "EventBatch",
+  "description": "Canonical persisted event batch.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "project_id", "batch_id", "batch_sequence", "committed_at", "actor", "command", "base_revisions", "events"],
+  "properties": {
+    "format": { "const": "gorce.event-batch/v1" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "batch_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "batch_sequence": { "type": "integer", "minimum": 1 },
+    "committed_at": { "type": "string", "format": "date-time" },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["human", "agent", "service", "system"] },
+        "operator_id": { "type": ["string", "null"], "format": "uuid" }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "arguments"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "arguments": {},
+        "request_id": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "base_revisions": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ordinal", "type", "schema_version", "data"],
+        "properties": {
+          "ordinal": { "type": "integer", "minimum": 0 },
+          "type": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$" },
+          "schema_version": { "type": "integer", "minimum": 1 },
+          "data": {}
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "format": "gorce.event-batch/v1",
+      "project_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+      "batch_id": "018f0f5e-7b12-7abd-8def-0123456789ab",
+      "batch_sequence": 1,
+      "committed_at": "2026-01-01T00:00:00Z",
+      "actor": { "kind": "system" },
+      "command": {
+        "name": "task.create",
+        "arguments": {},
+        "request_id": "req_01hqz7b4m9r7"
+      },
+      "base_revisions": { "project": 4 },
+      "events": [
+        {
+          "ordinal": 0,
+          "type": "task.created",
+          "schema_version": 1,
+          "data": { "task_id": "018f0f5e-7b12-7abe-8def-0123456789ab" }
+        }
+      ]
+    }
+  ]
+}

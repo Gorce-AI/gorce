@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/task-attempt.schema.json",
+  "title": "TaskAttempt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "task_id", "task_revision_id", "operator_id", "status", "started_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "task_id": { "type": "string", "format": "uuid" },
+    "task_revision_id": { "type": "string", "format": "uuid" },
+    "operator_id": { "type": "string", "format": "uuid" },
+    "status": { "type": "string", "enum": ["pending", "running", "succeeded", "failed", "cancelled", "needs_reconciliation"] },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": ["string", "null"], "format": "date-time" },
+    "error": { "type": ["string", "null"] },
+    "evidence_bundle_id": { "type": ["string", "null"], "format": "uuid" }
+  }
+}

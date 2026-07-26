@@ -1,0 +1,17 @@
+{
+  "cursor": "eyJzZXF1ZW5jZSI6MX0",
+  "events": [
+    {
+      "id": "018f0f5e-7b12-7abf-8def-0123456789ab",
+      "project_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+      "sequence": 1,
+      "event_type": "task.created",
+      "occurred_at": "2026-01-01T00:00:00Z",
+      "payload": {
+        "task_id": "018f0f5e-7b12-7abe-8def-0123456789ab"
+      }
+    }
+  ],
+  "next_cursor": "eyJzZXF1ZW5jZSI6Mn0",
+  "has_more": true
+}

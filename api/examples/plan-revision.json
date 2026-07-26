@@ -1,0 +1,29 @@
+{
+  "id": "018f0f5e-7b12-7ac2-8def-0123456789ab",
+  "plan_id": "018f0f5e-7b12-7ac3-8def-0123456789ab",
+  "project_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+  "goal_revision_id": "018f0f5e-7b12-7ac4-8def-0123456789ab",
+  "revision": 2,
+  "revision_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "summary": "Continue the contract work without dropping unfinished tasks.",
+  "items": [
+    {
+      "id": "018f0f5e-7b12-7ac0-8def-0123456789ab",
+      "title": "Publish the v0 contract",
+      "goal_links": [],
+      "task_id": "018f0f5e-7b12-7abd-8def-0123456789ab",
+      "task_revision_id": "018f0f5e-7b12-7abe-8def-0123456789ab"
+    }
+  ],
+  "promotion_mappings": [
+    {
+      "plan_item_id": "018f0f5e-7b12-7ac0-8def-0123456789ab",
+      "disposition": "KEEP",
+      "task_id": "018f0f5e-7b12-7abd-8def-0123456789ab",
+      "reason": "Unfinished task remains in the next plan unchanged."
+    }
+  ],
+  "status": "approved",
+  "created_by": "018f0f5e-7b12-7ac5-8def-0123456789ab",
+  "created_at": "2026-01-01T00:00:00Z"
+}

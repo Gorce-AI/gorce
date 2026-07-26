@@ -1,0 +1,13 @@
+{
+  "id": "018f0f5e-7b12-7ac0-8def-0123456789ab",
+  "project_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+  "sender_operator_id": "018f0f5e-7b12-7ac1-8def-0123456789ab",
+  "role": "operator",
+  "parts": [
+    {
+      "kind": "text",
+      "text": "The contract is ready for review."
+    }
+  ],
+  "created_at": "2026-01-01T00:00:00Z"
+}

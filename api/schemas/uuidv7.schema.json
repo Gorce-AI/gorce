@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/uuidv7.schema.json",
+  "title": "UUIDv7",
+  "description": "UUIDv7 values are serialized as canonical strings.",
+  "type": "string",
+  "format": "uuid",
+  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+  "examples": ["018f0f5e-7b12-7abc-8def-0123456789ab"]
+}

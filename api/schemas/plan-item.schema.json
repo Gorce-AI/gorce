@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/plan-item.schema.json",
+  "title": "PlanItem",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "goal_links"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "title": { "type": "string", "minLength": 1 },
+    "goal_links": {
+      "type": "array",
+      "items": { "$ref": "https://gorce.dev/schemas/goal-link.schema.json" }
+    },
+    "task_id": { "type": ["string", "null"], "format": "uuid" },
+    "task_revision_id": { "type": ["string", "null"], "format": "uuid" }
+  }
+}

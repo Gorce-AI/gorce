@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/permission-request.schema.json",
+  "title": "PermissionRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "operator_id", "action", "resource", "reason", "status", "requested_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "operator_id": { "type": "string", "format": "uuid" },
+    "action": { "type": "string", "minLength": 1 },
+    "resource": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "enum": ["pending", "approved", "denied", "expired"] },
+    "requested_at": { "type": "string", "format": "date-time" },
+    "decided_at": { "type": ["string", "null"], "format": "date-time" },
+    "decided_by": { "type": ["string", "null"], "format": "uuid" }
+  }
+}
