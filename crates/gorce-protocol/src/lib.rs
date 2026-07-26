@@ -9,6 +9,20 @@ use uuid::Uuid;
 pub const PROTOCOL_VERSION: &str = "0.1";
 pub const API_BASE_PATH: &str = "/v0";
 pub const EVENT_BATCH_FORMAT: &str = "gorce.event-batch/v1";
+pub const MAX_EVENT_COUNT: usize = 1_024;
+pub const MAX_EVENT_TYPE_BYTES: usize = 128;
+pub const MAX_EVENT_DATA_BYTES: usize = 1_048_576;
+pub const MAX_TOTAL_EVENT_DATA_BYTES: usize = 8 * 1_048_576;
+pub const MAX_COMMAND_NAME_BYTES: usize = 128;
+pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
+pub const MAX_COMMAND_ARGUMENT_BYTES: usize = 1_048_576;
+pub const MAX_REFERENCED_BLOBS: usize = 1_024;
+pub const MAX_BLOB_SIZE_BYTES: u64 = 1_073_741_824;
+pub const MAX_MEDIA_TYPE_BYTES: usize = 255;
+pub const MAX_FILENAME_BYTES: usize = 255;
+pub const MAX_TIMESTAMP_BYTES: usize = 64;
+pub const MAX_PUBLIC_EVENT_COUNT: usize = 500;
+pub const MAX_PUBLIC_EVENT_PAYLOAD_BYTES: usize = 1_048_576;
 
 pub type ProjectId = Uuid;
 pub type WorkstreamId = Uuid;
@@ -80,6 +94,52 @@ pub struct BlobRef {
     pub filename: Option<String>,
 }
 
+impl BlobRef {
+    pub fn validate(&self) -> Result<(), BlobRefValidationError> {
+        if !is_sha256_digest(&self.digest) {
+            return Err(BlobRefValidationError(
+                "digest must match sha256:<64 lowercase hexadecimal characters>".to_owned(),
+            ));
+        }
+        if self.size_bytes > MAX_BLOB_SIZE_BYTES {
+            return Err(BlobRefValidationError(format!(
+                "size_bytes exceeds {MAX_BLOB_SIZE_BYTES}"
+            )));
+        }
+        if self.media_type.is_empty() || self.media_type.len() > MAX_MEDIA_TYPE_BYTES {
+            return Err(BlobRefValidationError(format!(
+                "media_type must contain 1..={MAX_MEDIA_TYPE_BYTES} bytes"
+            )));
+        }
+        if self.media_type.chars().any(char::is_control) {
+            return Err(BlobRefValidationError(
+                "media_type must not contain control characters".to_owned(),
+            ));
+        }
+        if self
+            .filename
+            .as_ref()
+            .is_some_and(|filename| filename.is_empty() || filename.len() > MAX_FILENAME_BYTES)
+        {
+            return Err(BlobRefValidationError(format!(
+                "filename must contain 1..={MAX_FILENAME_BYTES} bytes"
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobRefValidationError(String);
+
+impl std::fmt::Display for BlobRefValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for BlobRefValidationError {}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EventActorKind {
@@ -102,9 +162,51 @@ pub struct EventActor {
 pub struct EventCommand {
     pub name: String,
     pub arguments: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<String>,
+    pub idempotency_key: String,
 }
+
+impl EventCommand {
+    pub fn validate(&self) -> Result<(), EventCommandValidationError> {
+        if self.name.is_empty() || self.name.len() > MAX_COMMAND_NAME_BYTES {
+            return Err(EventCommandValidationError(
+                "name must contain 1..=128 bytes".to_owned(),
+            ));
+        }
+        if !is_valid_idempotency_key(&self.idempotency_key) {
+            return Err(EventCommandValidationError(
+                "idempotency_key must contain 1..=256 bytes".to_owned(),
+            ));
+        }
+        let argument_bytes = json_size(&self.arguments).map_err(|error| {
+            EventCommandValidationError(format!("arguments cannot be serialized: {error}"))
+        })?;
+        if argument_bytes > MAX_COMMAND_ARGUMENT_BYTES {
+            return Err(EventCommandValidationError(format!(
+                "arguments exceed {MAX_COMMAND_ARGUMENT_BYTES} serialized bytes"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Returns the bytes to hash for command idempotency comparisons.
+    pub fn canonical_payload_digest_input(&self) -> Result<Vec<u8>, serde_json::Error> {
+        let mut payload = BTreeMap::new();
+        payload.insert("arguments", self.arguments.clone());
+        payload.insert("name", Value::String(self.name.clone()));
+        serde_json::to_vec(&payload)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventCommandValidationError(String);
+
+impl std::fmt::Display for EventCommandValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for EventCommandValidationError {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -129,7 +231,113 @@ pub struct EventBatch {
     pub command: EventCommand,
     pub base_revisions: BTreeMap<String, u64>,
     pub events: Vec<EventRecord>,
+    /// The authoritative manifest of blob references used by typed event payloads.
+    pub referenced_blobs: Vec<BlobRef>,
 }
+
+impl EventBatch {
+    pub fn validate(&self) -> Result<(), EventBatchValidationError> {
+        if self.format != EVENT_BATCH_FORMAT {
+            return Err(EventBatchValidationError(format!(
+                "format must be {EVENT_BATCH_FORMAT}"
+            )));
+        }
+        if self.batch_sequence == 0 {
+            return Err(EventBatchValidationError(
+                "batch_sequence must be at least 1".to_owned(),
+            ));
+        }
+        if !is_valid_timestamp(&self.committed_at) {
+            return Err(EventBatchValidationError(
+                "committed_at must be an RFC 3339 timestamp".to_owned(),
+            ));
+        }
+        self.command
+            .validate()
+            .map_err(|error| EventBatchValidationError(format!("command: {error}")))?;
+        if self.events.is_empty() {
+            return Err(EventBatchValidationError(
+                "events must contain at least one event".to_owned(),
+            ));
+        }
+        if self.events.len() > MAX_EVENT_COUNT {
+            return Err(EventBatchValidationError(format!(
+                "events must contain at most {MAX_EVENT_COUNT} events"
+            )));
+        }
+
+        let mut total_data_bytes = 0usize;
+        for (expected_ordinal, event) in self.events.iter().enumerate() {
+            let expected_ordinal = u64::try_from(expected_ordinal).map_err(|_| {
+                EventBatchValidationError("event ordinal cannot be represented".to_owned())
+            })?;
+            if event.ordinal != expected_ordinal {
+                return Err(EventBatchValidationError(format!(
+                    "event ordinal at index {expected_ordinal} must be {expected_ordinal}, got {}",
+                    event.ordinal
+                )));
+            }
+            if !is_valid_event_name(&event.event_type, MAX_EVENT_TYPE_BYTES) {
+                return Err(EventBatchValidationError(format!(
+                    "event {expected_ordinal} type must match ^[a-z][a-z0-9_.-]*$ and be at most {MAX_EVENT_TYPE_BYTES} bytes"
+                )));
+            }
+            if event.schema_version == 0 {
+                return Err(EventBatchValidationError(format!(
+                    "event {expected_ordinal} schema_version must be at least 1"
+                )));
+            }
+            let data_bytes = json_size(&event.data).map_err(|error| {
+                EventBatchValidationError(format!(
+                    "event {expected_ordinal} data cannot be serialized: {error}"
+                ))
+            })?;
+            if data_bytes > MAX_EVENT_DATA_BYTES {
+                return Err(EventBatchValidationError(format!(
+                    "event {expected_ordinal} data exceeds {MAX_EVENT_DATA_BYTES} serialized bytes"
+                )));
+            }
+            total_data_bytes = total_data_bytes.checked_add(data_bytes).ok_or_else(|| {
+                EventBatchValidationError("total event data size overflowed".to_owned())
+            })?;
+        }
+        if total_data_bytes > MAX_TOTAL_EVENT_DATA_BYTES {
+            return Err(EventBatchValidationError(format!(
+                "total event data exceeds {MAX_TOTAL_EVENT_DATA_BYTES} serialized bytes"
+            )));
+        }
+
+        if self.referenced_blobs.len() > MAX_REFERENCED_BLOBS {
+            return Err(EventBatchValidationError(format!(
+                "referenced_blobs must contain at most {MAX_REFERENCED_BLOBS} references"
+            )));
+        }
+        let mut digests = std::collections::BTreeSet::new();
+        for (index, blob) in self.referenced_blobs.iter().enumerate() {
+            blob.validate().map_err(|error| {
+                EventBatchValidationError(format!("referenced_blobs[{index}]: {error}"))
+            })?;
+            if !digests.insert(&blob.digest) {
+                return Err(EventBatchValidationError(format!(
+                    "referenced_blobs[{index}] duplicates digest {}",
+                    blob.digest
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventBatchValidationError(String);
+
+impl std::fmt::Display for EventBatchValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for EventBatchValidationError {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -565,6 +773,82 @@ pub struct PublicEventBatch {
 
 pub type PublicEventPage = PublicEventBatch;
 
+impl PublicEvent {
+    pub fn validate(&self) -> Result<(), PublicEventValidationError> {
+        if self.sequence == 0 {
+            return Err(PublicEventValidationError(
+                "sequence must be at least 1".to_owned(),
+            ));
+        }
+        if !is_valid_event_name(&self.event_type, MAX_EVENT_TYPE_BYTES) {
+            return Err(PublicEventValidationError(
+                "event_type must match ^[a-z][a-z0-9_.-]*$ and be at most 128 bytes".to_owned(),
+            ));
+        }
+        if !is_valid_timestamp(&self.occurred_at) {
+            return Err(PublicEventValidationError(
+                "occurred_at must be an RFC 3339 timestamp".to_owned(),
+            ));
+        }
+        if !self.payload.is_object() {
+            return Err(PublicEventValidationError(
+                "payload must be an object".to_owned(),
+            ));
+        }
+        let payload_bytes = json_size(&self.payload).map_err(|error| {
+            PublicEventValidationError(format!("payload cannot be serialized: {error}"))
+        })?;
+        if payload_bytes > MAX_PUBLIC_EVENT_PAYLOAD_BYTES {
+            return Err(PublicEventValidationError(format!(
+                "payload exceeds {MAX_PUBLIC_EVENT_PAYLOAD_BYTES} serialized bytes"
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl PublicEventBatch {
+    pub fn validate(&self) -> Result<(), PublicEventValidationError> {
+        if !is_valid_cursor(&self.cursor.0) {
+            return Err(PublicEventValidationError(
+                "cursor must contain 1..=512 bytes".to_owned(),
+            ));
+        }
+        if self.events.len() > MAX_PUBLIC_EVENT_COUNT {
+            return Err(PublicEventValidationError(format!(
+                "events must contain at most {MAX_PUBLIC_EVENT_COUNT} events"
+            )));
+        }
+        for event in &self.events {
+            event.validate()?;
+        }
+        if self.has_more && self.next_cursor.is_none() {
+            return Err(PublicEventValidationError(
+                "next_cursor is required when has_more is true".to_owned(),
+            ));
+        }
+        if let Some(next_cursor) = &self.next_cursor {
+            if !is_valid_cursor(&next_cursor.0) {
+                return Err(PublicEventValidationError(
+                    "next_cursor must contain 1..=512 bytes".to_owned(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicEventValidationError(String);
+
+impl std::fmt::Display for PublicEventValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for PublicEventValidationError {}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
@@ -594,28 +878,134 @@ pub fn protocol_version() -> &'static str {
     PROTOCOL_VERSION
 }
 
+fn json_size(value: &Value) -> Result<usize, serde_json::Error> {
+    Ok(serde_json::to_vec(value)?.len())
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 71
+        && bytes.starts_with(b"sha256:")
+        && bytes[7..]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+}
+
+fn is_valid_event_name(value: &str, max_bytes: usize) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= max_bytes
+        && bytes[0].is_ascii_lowercase()
+        && bytes[1..]
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_.-".contains(byte))
+}
+
+fn is_valid_idempotency_key(value: &str) -> bool {
+    !value.is_empty() && value.len() <= MAX_IDEMPOTENCY_KEY_BYTES
+}
+
+fn is_valid_cursor(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 512
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._~-".contains(&byte))
+}
+
+fn is_valid_timestamp(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.is_empty() || bytes.len() > MAX_TIMESTAMP_BYTES || bytes.len() < 20 {
+        return false;
+    }
+    if !(is_digits(&bytes[0..4])
+        && bytes[4] == b'-'
+        && is_digits(&bytes[5..7])
+        && bytes[7] == b'-'
+        && is_digits(&bytes[8..10])
+        && (bytes[10] == b'T' || bytes[10] == b't')
+        && is_digits(&bytes[11..13])
+        && bytes[13] == b':'
+        && is_digits(&bytes[14..16])
+        && bytes[16] == b':'
+        && is_digits(&bytes[17..19]))
+    {
+        return false;
+    }
+    let hour = two_digits(&bytes[11..13]);
+    let minute = two_digits(&bytes[14..16]);
+    let second = two_digits(&bytes[17..19]);
+    let year = four_digits(&bytes[0..4]);
+    let month = two_digits(&bytes[5..7]);
+    let day = two_digits(&bytes[8..10]);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 400 == 0 || (year % 4 == 0 && year % 100 != 0) => 29,
+        2 => 28,
+        _ => 0,
+    };
+    if month == 0 || day == 0 || day > days_in_month || hour > 23 || minute > 59 || second > 59 {
+        return false;
+    }
+
+    let mut index = 19;
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        let fraction_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if fraction_start == index {
+            return false;
+        }
+    }
+    match bytes.get(index) {
+        Some(b'Z') | Some(b'z') => index + 1 == bytes.len(),
+        Some(b'+') | Some(b'-') => {
+            index + 6 == bytes.len()
+                && is_digits(&bytes[index + 1..index + 3])
+                && bytes[index + 3] == b':'
+                && is_digits(&bytes[index + 4..index + 6])
+                && two_digits(&bytes[index + 1..index + 3]) <= 23
+                && two_digits(&bytes[index + 4..index + 6]) <= 59
+        }
+        _ => false,
+    }
+}
+
+fn is_digits(value: &[u8]) -> bool {
+    !value.is_empty() && value.iter().all(u8::is_ascii_digit)
+}
+
+fn two_digits(value: &[u8]) -> u8 {
+    (value[0] - b'0') * 10 + value[1] - b'0'
+}
+
+fn four_digits(value: &[u8]) -> u16 {
+    u16::from(value[0] - b'0') * 1_000
+        + u16::from(value[1] - b'0') * 100
+        + u16::from(value[2] - b'0') * 10
+        + u16::from(value[3] - b'0')
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        protocol_version, EventActor, EventActorKind, EventBatch, EventCommand, EventRecord,
-        PublicEventBatch, PublicEventCursor, UuidV7, EVENT_BATCH_FORMAT, PROTOCOL_VERSION,
+        protocol_version, BlobRef, EventActor, EventActorKind, EventBatch, EventCommand,
+        EventRecord, PublicEventBatch, PublicEventCursor, UuidV7, EVENT_BATCH_FORMAT,
+        PROTOCOL_VERSION,
     };
     use uuid::Uuid;
 
-    #[test]
-    fn exposes_the_protocol_version() {
-        assert_eq!(protocol_version(), PROTOCOL_VERSION);
-    }
-
-    #[test]
-    fn canonical_event_batch_round_trips_through_json() {
+    fn valid_batch() -> EventBatch {
         let project_id = Uuid::parse_str("018f0f5e-7b12-7abc-8def-0123456789ab").unwrap();
         let batch_id =
             UuidV7::from_uuid(Uuid::parse_str("018f0f5e-7b12-7abd-8def-0123456789ab").unwrap())
                 .unwrap();
-        let batch = EventBatch {
+        EventBatch {
             format: EVENT_BATCH_FORMAT.to_owned(),
             project_id,
             batch_id,
@@ -628,7 +1018,7 @@ mod tests {
             command: EventCommand {
                 name: "task.create".to_owned(),
                 arguments: serde_json::json!({}),
-                request_id: None,
+                idempotency_key: "idem_01hqz7b4m9r7".to_owned(),
             },
             base_revisions: BTreeMap::new(),
             events: vec![EventRecord {
@@ -637,11 +1027,126 @@ mod tests {
                 schema_version: 1,
                 data: serde_json::json!({"task_id": project_id}),
             }],
-        };
+            referenced_blobs: Vec::new(),
+        }
+    }
+
+    fn valid_blob() -> BlobRef {
+        BlobRef {
+            digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .to_owned(),
+            size_bytes: 42,
+            media_type: "text/plain".to_owned(),
+            filename: Some("notes.txt".to_owned()),
+        }
+    }
+
+    #[test]
+    fn exposes_the_protocol_version() {
+        assert_eq!(protocol_version(), PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn canonical_event_batch_round_trips_through_json() {
+        let batch = valid_batch();
 
         let encoded = serde_json::to_string(&batch).unwrap();
         let decoded: EventBatch = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, batch);
+        batch.validate().unwrap();
+    }
+
+    #[test]
+    fn canonical_payload_digest_input_is_deterministic_and_excludes_key() {
+        let mut first = valid_batch().command;
+        let mut second = first.clone();
+        second.idempotency_key = "another-key".to_owned();
+        assert_eq!(
+            first.canonical_payload_digest_input().unwrap(),
+            second.canonical_payload_digest_input().unwrap()
+        );
+        assert_eq!(
+            first.canonical_payload_digest_input().unwrap(),
+            br#"{"arguments":{},"name":"task.create"}"#
+        );
+        first.arguments = serde_json::json!({"changed": true});
+        assert_ne!(
+            first.canonical_payload_digest_input().unwrap(),
+            second.canonical_payload_digest_input().unwrap()
+        );
+    }
+
+    #[test]
+    fn canonical_validation_rejects_empty_events() {
+        let mut batch = valid_batch();
+        batch.events.clear();
+        assert!(batch.validate().is_err());
+    }
+
+    #[test]
+    fn canonical_validation_rejects_ordinal_gaps_and_duplicates() {
+        let mut gap = valid_batch();
+        gap.events.push(EventRecord {
+            ordinal: 2,
+            event_type: "task.updated".to_owned(),
+            schema_version: 1,
+            data: serde_json::json!({}),
+        });
+        assert!(gap.validate().is_err());
+
+        let mut duplicate = valid_batch();
+        duplicate.events.push(EventRecord {
+            ordinal: 0,
+            event_type: "task.updated".to_owned(),
+            schema_version: 1,
+            data: serde_json::json!({}),
+        });
+        assert!(duplicate.validate().is_err());
+    }
+
+    #[test]
+    fn canonical_validation_rejects_zero_schema_version_and_invalid_event_type() {
+        let mut zero_version = valid_batch();
+        zero_version.events[0].schema_version = 0;
+        assert!(zero_version.validate().is_err());
+
+        let mut invalid_type = valid_batch();
+        invalid_type.events[0].event_type = "Task.Created".to_owned();
+        assert!(invalid_type.validate().is_err());
+
+        let mut invalid_timestamp = valid_batch();
+        invalid_timestamp.committed_at = "2026-02-30T00:00:00Z".to_owned();
+        assert!(invalid_timestamp.validate().is_err());
+    }
+
+    #[test]
+    fn canonical_deserialization_rejects_missing_idempotency_key() {
+        let mut value = serde_json::to_value(valid_batch()).unwrap();
+        value["command"]
+            .as_object_mut()
+            .unwrap()
+            .remove("idempotency_key");
+        assert!(serde_json::from_value::<EventBatch>(value).is_err());
+
+        let mut empty = valid_batch();
+        empty.command.idempotency_key.clear();
+        assert!(empty.validate().is_err());
+    }
+
+    #[test]
+    fn canonical_validation_rejects_duplicate_and_invalid_blob_references() {
+        let mut duplicate = valid_batch();
+        let blob = valid_blob();
+        blob.validate().unwrap();
+        duplicate.referenced_blobs = vec![blob.clone(), blob];
+        assert!(duplicate.validate().is_err());
+
+        let mut invalid = valid_batch();
+        invalid.referenced_blobs = vec![BlobRef {
+            digest: "not-a-digest".to_owned(),
+            ..valid_blob()
+        }];
+        assert!(invalid.validate().is_err());
     }
 
     #[test]
@@ -659,6 +1164,7 @@ mod tests {
             serde_json::from_str::<PublicEventBatch>(&encoded).unwrap(),
             page
         );
+        page.validate().unwrap();
     }
 
     #[test]

@@ -9,6 +9,11 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_DIR = ROOT / "api" / "schemas"
 EXAMPLE_DIR = ROOT / "api" / "examples"
+NEGATIVE_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
+MAX_EVENT_COUNT = 1024
+MAX_EVENT_DATA_BYTES = 1_048_576
+MAX_TOTAL_EVENT_DATA_BYTES = 8 * 1_048_576
+MAX_REFERENCED_BLOBS = 1024
 SCHEMAS_BY_ID = {
     json.loads(path.read_text())["$id"]: json.loads(path.read_text())
     for path in SCHEMA_DIR.glob("*.schema.json")
@@ -124,11 +129,51 @@ def _validate_format(value, format_name, path):
         raise SchemaViolation(f"{path}: invalid UUID")
     if format_name == "date-time":
         try:
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError as error:
             raise SchemaViolation(f"{path}: invalid date-time") from error
+        if parsed.tzinfo is None:
+            raise SchemaViolation(f"{path}: date-time must include a timezone")
     if format_name == "uri" and not urlparse(value).scheme:
         raise SchemaViolation(f"{path}: invalid URI")
+
+
+def validate_event_batch_contract(value):
+    """Apply canonical constraints that JSON Schema cannot express dynamically."""
+    events = value["events"]
+    if not events:
+        raise SchemaViolation("$.events: canonical batches require at least one event")
+    if len(events) > MAX_EVENT_COUNT:
+        raise SchemaViolation("$.events: too many events")
+    for expected, event in enumerate(events):
+        if event["ordinal"] != expected:
+            raise SchemaViolation(
+                f"$.events[{expected}].ordinal: expected {expected}, got {event['ordinal']}"
+            )
+        data_size = len(
+            json.dumps(event["data"], ensure_ascii=False, separators=(",", ":"))
+            .encode("utf-8")
+        )
+        if data_size > MAX_EVENT_DATA_BYTES:
+            raise SchemaViolation(f"$.events[{expected}].data: serialized data is too large")
+        if event["schema_version"] < 1:
+            raise SchemaViolation(f"$.events[{expected}].schema_version: must be at least 1")
+    total_data_size = sum(
+        len(json.dumps(event["data"], ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        for event in events
+    )
+    if total_data_size > MAX_TOTAL_EVENT_DATA_BYTES:
+        raise SchemaViolation("$.events: total serialized data is too large")
+
+    references = value["referenced_blobs"]
+    if len(references) > MAX_REFERENCED_BLOBS:
+        raise SchemaViolation("$.referenced_blobs: too many references")
+    digests = set()
+    for index, reference in enumerate(references):
+        digest = reference["digest"]
+        if digest in digests:
+            raise SchemaViolation(f"$.referenced_blobs[{index}]: duplicate digest")
+        digests.add(digest)
 
 
 class ContractTest(unittest.TestCase):
@@ -146,6 +191,8 @@ class ContractTest(unittest.TestCase):
             for index, example in enumerate(schema.get("examples", [])):
                 with self.subTest(schema=path.name, example=index):
                     validate(example, schema)
+                    if path.name == "event-batch.schema.json":
+                        validate_event_batch_contract(example)
 
     def test_checked_in_golden_examples(self):
         cases = {
@@ -162,6 +209,19 @@ class ContractTest(unittest.TestCase):
                 example = json.loads((EXAMPLE_DIR / example_name).read_text())
                 schema = json.loads((SCHEMA_DIR / schema_name).read_text())
                 validate(example, schema)
+                if schema_name == "event-batch.schema.json":
+                    validate_event_batch_contract(example)
+
+    def test_canonical_negative_fixtures_fail_schema_or_semantic_validation(self):
+        schema = json.loads((SCHEMA_DIR / "event-batch.schema.json").read_text())
+        fixtures = sorted(NEGATIVE_FIXTURE_DIR.glob("event-batch-*.json"))
+        self.assertEqual(len(fixtures), 8)
+        for path in fixtures:
+            with self.subTest(fixture=path.name):
+                value = json.loads(path.read_text())
+                with self.assertRaises(SchemaViolation):
+                    validate(value, schema)
+                    validate_event_batch_contract(value)
 
     def test_canonical_and_public_event_formats_are_not_interchangeable(self):
         canonical = json.loads((EXAMPLE_DIR / "event-batch.json").read_text())
@@ -204,6 +264,9 @@ class ContractTest(unittest.TestCase):
         self.assertIn("event-batch.schema.json", document)
         self.assertIn("public-event-batch.schema.json", document)
         self.assertIn("public-event-cursor.schema.json", document)
+        self.assertIn("idempotency_key", document)
+        self.assertIn("same key with a different payload", document)
+        self.assertIn("referenced_blobs", document)
 
 
 if __name__ == "__main__":

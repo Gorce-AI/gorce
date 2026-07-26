@@ -2,7 +2,28 @@ openapi: 3.1.0
 info:
   title: Gorce API
   version: 0.1.0
-  description: Version-zero contract for project work coordination and public events.
+  description: |
+    Version-zero contract for project work coordination and public events.
+
+    Canonical persisted event batches are strict v0 records: events are non-empty,
+    ordinals are exactly 0 through N-1, event schemas start at version 1, event
+    types and timestamps are constrained, and event count and serialized data
+    sizes are bounded. `batch_id` is an immutable UUIDv7 that must be globally
+    unique for each accepted batch and must never be reused for another command.
+
+    Canonical command metadata requires a non-empty `idempotency_key`. The same
+    key with the same command payload is an idempotent replay and returns the
+    original result without appending. The same key with a different payload is
+    rejected as a conflict. The command payload digest input is the canonical
+    UTF-8 JSON serialization of `{ "arguments": <arguments>, "name": <name> }`
+    with lexicographically sorted object members; the idempotency key is not
+    included in that input.
+
+    `referenced_blobs` is the authoritative BlobRef manifest for canonical event
+    payloads. Every payload BlobRef must be declared and every declared reference
+    is validated before append; validators do not infer references by recursively
+    scanning arbitrary JSON. Canonical persisted validation is separate from the
+    public event read API, and legacy records do not widen the v0 schema.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -695,7 +716,12 @@ components:
           schema:
             $ref: '../schemas/message.schema.json'
     EventBatch:
-      description: A canonical persisted event batch
+      description: |
+        A canonical persisted event batch. `batch_id` is immutable and globally
+        unique. A same-key/same-payload retry returns the original batch without
+        appending; a same-key/different-payload request is a conflict. The
+        `referenced_blobs` manifest must be complete and each BlobRef is checked
+        before append.
       content:
         application/json:
           schema:

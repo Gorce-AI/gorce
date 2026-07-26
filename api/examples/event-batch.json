@@ -10,7 +10,7 @@
   "command": {
     "name": "task.create",
     "arguments": {},
-    "request_id": "req_01hqz7b4m9r7"
+    "idempotency_key": "idem_01hqz7b4m9r7"
   },
   "base_revisions": {
     "project": 4
@@ -24,5 +24,6 @@
         "task_id": "018f0f5e-7b12-7abe-8def-0123456789ab"
       }
     }
-  ]
+  ],
+  "referenced_blobs": []
 }
