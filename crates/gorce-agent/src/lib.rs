@@ -131,13 +131,16 @@ mod tests {
 
     #[test]
     fn default_public_surface_has_no_authority_or_runtime_exports() {
-        let normalized_source = include_str!("lib.rs")
-            .replace("\r\n", "\n")
-            .replace('\r', "\n");
-        let source = normalized_source
-            .split("#[cfg(test)]\n#[doc(hidden)]\npub mod test_support")
-            .next()
-            .expect("test-support module marker");
+        let lines: Vec<_> = include_str!("lib.rs")
+            .split(['\r', '\n'])
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        let test_support = lines
+            .iter()
+            .position(|line| *line == "pub mod test_support {")
+            .expect("test-support module declaration");
+        let source = &lines[..test_support];
         for module in [
             "agent",
             "capability",
@@ -148,12 +151,32 @@ mod tests {
         ] {
             let forbidden = format!("{}{}{}", "pub use ", module, "::");
             assert!(
-                !source.contains(forbidden.as_str()),
+                !source.iter().any(|line| line.contains(&forbidden)),
                 "forbidden public export: {forbidden}"
             );
-            let test_only = format!("#[cfg(test)]\nmod {module};");
+            let declaration = format!("mod {module};");
+            let declarations: Vec<_> = source
+                .iter()
+                .enumerate()
+                .filter_map(|(index, line)| (*line == declaration).then_some(index))
+                .collect();
             assert!(
-                source.contains(test_only.as_str()),
+                !declarations.is_empty(),
+                "runtime module declaration missing: {module}"
+            );
+            assert!(
+                declarations.iter().all(|&index| {
+                    let mut preceding = index;
+                    while preceding > 0 {
+                        preceding -= 1;
+                        match source[preceding] {
+                            "#[cfg(test)]" => return true,
+                            line if line.starts_with("#[") => continue,
+                            _ => break,
+                        }
+                    }
+                    false
+                }),
                 "runtime module is not test-only: {module}"
             );
         }
