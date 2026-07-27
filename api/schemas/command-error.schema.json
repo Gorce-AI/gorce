@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/command-error.schema.json",
+  "title": "CommandError",
+  "description": "Typed failure for external command submission.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "message"],
+  "properties": {
+    "code": {
+      "type": "string",
+      "enum": ["invalid_command", "invalid_arguments", "missing_idempotency_key", "idempotency_conflict", "command_not_supported", "command_rejected", "commit_unavailable"]
+    },
+    "message": { "type": "string", "minLength": 1 },
+    "request_id": { "type": "string", "minLength": 1 },
+    "details": {}
+  },
+  "examples": [
+    {
+      "code": "idempotency_conflict",
+      "message": "Idempotency-Key was already used with a different command envelope.",
+      "request_id": "req_01hqz7b4m9r7"
+    }
+  ]
+}

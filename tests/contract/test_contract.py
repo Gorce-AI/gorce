@@ -1,5 +1,7 @@
 import json
 import re
+import shutil
+import subprocess
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -177,6 +179,76 @@ def validate_event_batch_contract(value):
 
 
 class ContractTest(unittest.TestCase):
+    def test_daemon_writer_surface_is_private_and_contained(self):
+        source = (ROOT / "crates" / "gorce-daemon" / "src" / "lib.rs").read_text()
+        self.assertNotIn("pub struct ProjectRegistry", source)
+        self.assertNotIn("pub struct ProjectHandle", source)
+        self.assertNotIn("pub struct ProjectCommandService", source)
+        self.assertNotIn("pub fn registry", source)
+        self.assertIn("pub struct ProjectReadFacade", source)
+        self.assertNotIn("PowerShell", source)
+        self.assertNotIn("powershell.exe", source)
+        self.assertIn("#![forbid(unsafe_code)]", source)
+        self.assertNotIn("CreateFileW", source)
+        platform_source = (
+            ROOT / "crates" / "gorce-platform-security" / "src" / "lib.rs"
+        ).read_text()
+        self.assertIn("#![forbid(unsafe_code)]", platform_source)
+        self.assertNotIn("unsafe {", platform_source)
+        self.assertIn("pub struct SecureRuntime", platform_source)
+        self.assertIn("pub struct PrivateFile", platform_source)
+        enclave_source = (
+            ROOT / "crates" / "gorce-platform-security-win" / "src" / "lib.rs"
+        ).read_text()
+        self.assertIn("CreateFileW", enclave_source)
+        self.assertIn("NtCreateFile", enclave_source)
+        self.assertIn("#![deny(unsafe_op_in_unsafe_fn)]", enclave_source)
+        public_error = source[source.index("pub enum DaemonError") : source.index("impl fmt::Display")]
+        self.assertNotIn("ProjectStoreWriter", public_error)
+        self.assertNotIn("WriterStoreError", public_error)
+
+        metadata = json.loads(
+            subprocess.check_output(
+                [
+                    shutil.which("cargo") or "/opt/homebrew/opt/rustup/bin/cargo",
+                    "metadata",
+                    "--format-version",
+                    "1",
+                    "--locked",
+                    "--no-deps",
+                ],
+                cwd=ROOT,
+                text=True,
+            )
+        )
+        owners = [
+            package["name"]
+            for package in metadata["packages"]
+            if any(
+                dependency["name"] == "gorce-store-writer"
+                for dependency in package["dependencies"]
+            )
+        ]
+        self.assertEqual(owners, ["gorce-daemon"])
+        platform_owners = [
+            package["name"]
+            for package in metadata["packages"]
+            if any(
+                dependency["name"] == "gorce-platform-security"
+                for dependency in package["dependencies"]
+            )
+        ]
+        self.assertEqual(platform_owners, ["gorce-daemon"])
+        windows_owners = [
+            package["name"]
+            for package in metadata["packages"]
+            if any(
+                dependency["name"] == "gorce-platform-security-win"
+                for dependency in package["dependencies"]
+            )
+        ]
+        self.assertEqual(windows_owners, ["gorce-platform-security"])
+
     def test_every_schema_is_json_schema_2020_12(self):
         schemas = sorted(SCHEMA_DIR.glob("*.schema.json"))
         self.assertGreater(len(schemas), 1)
@@ -198,6 +270,9 @@ class ContractTest(unittest.TestCase):
         cases = {
             "project.json": "project.schema.json",
             "event-batch.json": "event-batch.schema.json",
+            "command-request.json": "command-request.schema.json",
+            "command-commit.json": "command-commit.schema.json",
+            "command-error.json": "command-error.schema.json",
             "public-event-page.json": "public-event-batch.schema.json",
             "promotion-keep.json": "promotion-mapping.schema.json",
             "plan-revision.json": "plan-revision.schema.json",
@@ -260,13 +335,111 @@ class ContractTest(unittest.TestCase):
         document = (ROOT / "api" / "openapi" / "openapi.yaml").read_text()
         self.assertIn("openapi: 3.1.0", document)
         self.assertIn("  /v0/health:", document)
+        self.assertIn("  /v0/projects/{project_id}/commands:", document)
         self.assertIn("/v0/projects/{project_id}/events:", document)
+        self.assertIn("/v0/events/stream:", document)
         self.assertIn("event-batch.schema.json", document)
+        self.assertIn("command-request.schema.json", document)
+        self.assertIn("command-commit.schema.json", document)
+        self.assertIn("command-error.schema.json", document)
+        self.assertIn("authority.profile_register", (SCHEMA_DIR / "command-request.schema.json").read_text())
+        self.assertIn("authority.operator_bind", (SCHEMA_DIR / "command-request.schema.json").read_text())
+        self.assertIn("authority.admission_create", (SCHEMA_DIR / "command-request.schema.json").read_text())
         self.assertIn("public-event-batch.schema.json", document)
         self.assertIn("public-event-cursor.schema.json", document)
-        self.assertIn("idempotency_key", document)
-        self.assertIn("same key with a different payload", document)
-        self.assertIn("referenced_blobs", document)
+        self.assertIn("Idempotency-Key", document)
+        self.assertIn("X-Gorce-Protocol-Version", document)
+        self.assertIn("CommandRequestError", document)
+        self.assertIn("oneOf:", document)
+        self.assertIn("../schemas/error.schema.json", document)
+        self.assertIn("command request", document)
+        self.assertIn("bearerAuth", document)
+        self.assertIn("X-Gorce-Token", document)
+        self.assertIn("Last-Event-ID", document)
+        self.assertIn("resync_required", document)
+        self.assertIn("HTTP 405", document)
+
+    def test_command_request_rejects_forged_daemon_fields(self):
+        value = json.loads((EXAMPLE_DIR / "command-request.json").read_text())
+        schema = json.loads((SCHEMA_DIR / "command-request.schema.json").read_text())
+        validate(value, schema)
+        for field in (
+            "actor",
+            "committed_at",
+            "batch_id",
+            "batch_sequence",
+            "events",
+            "referenced_blobs",
+            "idempotency_key",
+        ):
+            forged = json.loads(json.dumps(value))
+            forged[field] = {} if field in {"actor", "events", "referenced_blobs"} else "forged"
+            with self.subTest(field=field):
+                with self.assertRaises(SchemaViolation):
+                    validate(forged, schema)
+        forged_admission = {
+            "version": "gorce.command/v1",
+            "command": {
+                "kind": "authority.admission_create",
+                "arguments": {
+                    "operator_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+                    "run_id": "018f0f5e-7b12-7abd-8def-0123456789ab",
+                    "profile_id": "forged",
+                    "grant": {},
+                    "actor": {},
+                },
+            },
+        }
+        with self.assertRaises(SchemaViolation):
+            validate(forged_admission, schema)
+
+    def test_command_contract_has_header_only_idempotency(self):
+        value = json.loads((EXAMPLE_DIR / "command-request.json").read_text())
+        self.assertNotIn("idempotency_key", value)
+        self.assertNotIn("Idempotency-Key", value)
+        document = (ROOT / "api" / "openapi" / "openapi.yaml").read_text()
+        header = document.split("    IdempotencyKey:", 1)[1].split("    EventLimit:", 1)[0]
+        self.assertIn("name: Idempotency-Key", header)
+        self.assertIn("in: header", header)
+        self.assertIn("required: true", header)
+        self.assertIn("minLength: 1", header)
+        self.assertIn("maxLength: 256", header)
+
+    def test_command_commit_has_daemon_identity_and_opaque_cursors(self):
+        value = json.loads((EXAMPLE_DIR / "command-commit.json").read_text())
+        schema = json.loads((SCHEMA_DIR / "command-commit.schema.json").read_text())
+        validate(value, schema)
+        self.assertIn("project_id", value)
+        self.assertIn("batch_id", value)
+        self.assertIn("batch_sequence", value)
+        self.assertIn("public_cursors", value)
+        self.assertIn("result", value)
+        self.assertIn("evidence_refs", value)
+        self.assertTrue(all(cursor.startswith("g1-") for cursor in value["public_cursors"]))
+
+    def test_cursor_contract_is_opaque_and_query_header_semantics_match(self):
+        cursor_schema = json.loads((SCHEMA_DIR / "public-event-cursor.schema.json").read_text())
+        validate("g1-0-0", cursor_schema)
+        validate("g1-100-2", cursor_schema)
+        with self.assertRaises(SchemaViolation):
+            validate("eyJzZXF1ZW5jZSI6MX0", cursor_schema)
+        self.assertIn("must not parse it", cursor_schema["description"])
+        self.assertIn("numeric contiguity", cursor_schema["description"])
+        document = (ROOT / "api" / "openapi" / "openapi.yaml").read_text()
+        self.assertIn("opaque resume cursor", document)
+        self.assertIn("Last-Event-ID", document)
+
+    def test_events_are_read_only_and_have_no_raw_batch_writer(self):
+        document = (ROOT / "api" / "openapi" / "openapi.yaml").read_text()
+        events_path = document.split("  /v0/projects/{project_id}/events:", 1)[1].split(
+            "  /v0/projects/{project_id}/commands:", 1
+        )[0]
+        self.assertNotIn("    post:", events_path)
+        self.assertEqual(document.count("    post:"), 1)
+        self.assertNotIn("event-batches", document)
+        self.assertNotIn("requestBodies:", document)
+        self.assertNotIn("/v0/projects/{project_id}/tasks:", document)
+        self.assertIn("x-daemon-only: true", document)
 
 
 if __name__ == "__main__":

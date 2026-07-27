@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/principal.schema.json",
+  "title": "AuthorityPrincipal",
+  "x-daemon-only": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "kind", "subject", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "kind": { "const": "local_control" },
+    "subject": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

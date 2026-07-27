@@ -2,16 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gorce.dev/schemas/public-event-batch.schema.json",
   "title": "PublicEventBatch",
-  "description": "Paginated public event read response.",
+  "description": "Paginated, read-only public event response. Cursors are opaque and must be reused verbatim; clients must not require numeric contiguity for correctness.",
   "type": "object",
   "additionalProperties": false,
   "required": ["cursor", "events", "has_more"],
   "properties": {
     "cursor": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 512,
-      "pattern": "^[A-Za-z0-9._~-]+$"
+      "$ref": "https://gorce.dev/schemas/public-event-cursor.schema.json"
     },
     "events": {
       "type": "array",
@@ -20,10 +17,10 @@
       }
     },
     "next_cursor": {
-      "type": ["string", "null"],
-      "minLength": 1,
-      "maxLength": 512,
-      "pattern": "^[A-Za-z0-9._~-]+$"
+      "oneOf": [
+        { "$ref": "https://gorce.dev/schemas/public-event-cursor.schema.json" },
+        { "type": "null" }
+      ]
     },
     "has_more": { "type": "boolean" }
   },
@@ -35,7 +32,7 @@
   ],
   "examples": [
     {
-      "cursor": "eyJzZXF1ZW5jZSI6MX0",
+      "cursor": "g1-0-0",
       "events": [
         {
           "id": "018f0f5e-7b12-7abf-8def-0123456789ab",
@@ -46,7 +43,7 @@
           "payload": { "task_id": "018f0f5e-7b12-7abe-8def-0123456789ab" }
         }
       ],
-      "next_cursor": "eyJzZXF1ZW5jZSI6Mn0",
+      "next_cursor": "g1-1-0",
       "has_more": true
     }
   ]

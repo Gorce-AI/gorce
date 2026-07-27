@@ -1,0 +1,5 @@
+{
+  "code": "idempotency_conflict",
+  "message": "Idempotency-Key was already used with a different command envelope.",
+  "request_id": "req_01hqz7b4m9r7"
+}

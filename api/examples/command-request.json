@@ -1,0 +1,7 @@
+{
+  "version": "gorce.command/v1",
+  "command": {
+    "kind": "authority.profile_register",
+    "arguments": {}
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/admission.schema.json",
+  "title": "Admission",
+  "x-daemon-only": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "principal_id", "operator_id", "run_id", "binding_id", "profile_revision_id", "policy_id", "grant", "spec_digest", "execution_disposition", "actor", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "principal_id": { "type": "string", "format": "uuid" },
+    "operator_id": { "type": "string", "format": "uuid" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "binding_id": { "type": "string", "format": "uuid" },
+    "profile_revision_id": { "type": "string", "format": "uuid" },
+    "policy_id": { "type": "string", "format": "uuid" },
+    "grant": { "type": "object" },
+    "spec_digest": { "type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$" },
+    "execution_disposition": { "type": "string", "enum": ["disabled"] },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "service" },
+        "operator_id": { "type": ["string", "null"], "format": "uuid" }
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

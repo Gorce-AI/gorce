@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/resync-required.schema.json",
+  "title": "ResyncRequired",
+  "description": "Cursor cannot be resumed from the retained public event history. Fetch a fresh snapshot and restart the stream from a current cursor.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project_id", "requested_cursor"],
+  "properties": {
+    "project_id": { "type": "string", "format": "uuid" },
+    "requested_cursor": { "$ref": "https://gorce.dev/schemas/public-event-cursor.schema.json" },
+    "oldest_cursor": {
+      "$ref": "https://gorce.dev/schemas/public-event-cursor.schema.json"
+    },
+    "latest_cursor": {
+      "$ref": "https://gorce.dev/schemas/public-event-cursor.schema.json"
+    }
+  },
+  "examples": [
+    {
+      "project_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+      "requested_cursor": "g1-1-0",
+      "oldest_cursor": "g1-4-0",
+      "latest_cursor": "g1-7-0"
+    }
+  ]
+}

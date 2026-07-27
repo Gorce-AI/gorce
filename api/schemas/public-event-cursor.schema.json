@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gorce.dev/schemas/public-event-cursor.schema.json",
   "title": "PublicEventCursor",
-  "description": "Opaque cursor for the append-only public event stream.",
+  "description": "Opaque v0 public event cursor. The current representation is g1-<batch-sequence>-<event-ordinal>, but clients must not parse it, infer numeric contiguity, or use its apparent components for correctness. Query cursor and Last-Event-ID carry identical resume semantics.",
   "type": "string",
   "minLength": 1,
   "maxLength": 512,
-  "pattern": "^[A-Za-z0-9._~-]+$",
-  "examples": ["eyJzZXF1ZW5jZSI6MX0"]
+  "pattern": "^g1-(0|[1-9][0-9]*)-(0|[1-9][0-9]*)$",
+  "examples": ["g1-0-0", "g1-7-0"]
 }

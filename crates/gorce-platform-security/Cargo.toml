@@ -1,0 +1,16 @@
+[package]
+name = "gorce-platform-security"
+description = "Audited platform security capabilities for the Gorce daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+fs2 = "0.4.3"
+rustix = { version = "0.38.32", features = ["fs", "process"] }
+
+[target.'cfg(windows)'.dependencies]
+gorce-platform-security-win = { path = "../gorce-platform-security-win" }

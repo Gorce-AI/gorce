@@ -1,0 +1,16 @@
+{
+  "project_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+  "batch_id": "018f0f5e-7b12-7abd-8def-0123456789ab",
+  "batch_sequence": 7,
+  "public_cursors": ["g1-7-0"],
+  "result": {
+    "kind": "created",
+    "resource_refs": [
+      {
+        "kind": "profile_revision",
+        "id": "018f0f5e-7b12-7abe-8def-0123456789ab"
+      }
+    ]
+  },
+  "evidence_refs": []
+}
