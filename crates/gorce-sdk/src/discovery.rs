@@ -262,6 +262,8 @@ fn ensure_private_mode(metadata: &fs::Metadata, label: &str) -> Result<(), SdkEr
             return Err(SdkError::Discovery(format!("{label} is not private")));
         }
     }
+    #[cfg(not(unix))]
+    let _ = (metadata, label);
     Ok(())
 }
 
@@ -271,6 +273,8 @@ fn set_private_file(path: &Path) -> Result<(), SdkError> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
@@ -305,6 +309,8 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
         }
+        #[cfg(not(unix))]
+        let _ = (path, mode);
     }
 
     #[test]

@@ -2748,7 +2748,6 @@ mod tests {
     #[test]
     fn instance_lock_rejects_a_second_owner() {
         let root = std::env::temp_dir().join(format!("gorce-daemon-lock-{}", Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
         let runtime = SecureRuntime::open(&root).unwrap();
         let first = runtime.lock(DEFAULT_INSTANCE_LOCK_NAME).unwrap();
         assert!(runtime.lock(DEFAULT_INSTANCE_LOCK_NAME).is_err());
@@ -2769,7 +2768,6 @@ mod tests {
             std::process::exit(1);
         }
         let runtime = std::env::temp_dir().join(format!("gorce-daemon-first-{}", Uuid::new_v4()));
-        fs::create_dir_all(&runtime).unwrap();
         let executable = std::env::current_exe().unwrap();
         let mut children = Vec::new();
         for _ in 0..2 {
@@ -2795,7 +2793,6 @@ mod tests {
     #[test]
     fn discovery_round_trips_without_debug_token_surface() {
         let root = std::env::temp_dir().join(format!("gorce-daemon-discovery-{}", Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
         let runtime = SecureRuntime::open(&root).unwrap();
         write_discovery(
             &runtime,
@@ -2819,7 +2816,6 @@ mod tests {
 
         let root =
             std::env::temp_dir().join(format!("gorce-daemon-identity-check-{}", Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
         let runtime = SecureRuntime::open(&root).unwrap();
         let identity = runtime.path().join(DEFAULT_IDENTITY_NAME);
         let target = runtime.path().join("identity-target");
@@ -2838,7 +2834,6 @@ mod tests {
     fn windows_runtime_creation_validates_every_opened_private_handle() {
         let root =
             std::env::temp_dir().join(format!("gorce-daemon-windows-handles-{}", Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
         let runtime = SecureRuntime::open(&root).unwrap();
         runtime
             .replace_private(
@@ -2893,7 +2888,6 @@ mod tests {
         let runtime =
             std::env::temp_dir().join(format!("gorce-daemon-live-runtime-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(&runtime).unwrap();
         let project_id = Uuid::new_v4();
         let daemon = Daemon::new(
             DaemonConfig::new(vec![ProjectConfig::new(project_id, &root)])
@@ -3109,7 +3103,6 @@ mod tests {
         let runtime =
             std::env::temp_dir().join(format!("gorce-authority-runtime-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(&runtime).unwrap();
         let project_id = Uuid::new_v4();
         let daemon = Daemon::new(
             DaemonConfig::new(vec![ProjectConfig::new(project_id, &root)])
@@ -3211,7 +3204,6 @@ mod tests {
         let root = std::env::temp_dir().join(format!("gorce-daemon-identity-{}", Uuid::new_v4()));
         let runtime = std::env::temp_dir().join(format!("gorce-daemon-runtime-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(&runtime).unwrap();
         let project_id = Uuid::new_v4();
         let config = DaemonConfig::new(vec![ProjectConfig::new(project_id, &root)])
             .with_runtime_dir(&runtime);

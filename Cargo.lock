@@ -558,6 +558,7 @@ version = "0.1.0"
 dependencies = [
  "fs2",
  "gorce-core",
+ "gorce-platform-security",
  "gorce-protocol",
  "rusqlite",
  "serde",

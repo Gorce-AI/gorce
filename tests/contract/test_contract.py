@@ -238,7 +238,7 @@ class ContractTest(unittest.TestCase):
                 for dependency in package["dependencies"]
             )
         ]
-        self.assertEqual(platform_owners, ["gorce-daemon"])
+        self.assertEqual(platform_owners, ["gorce-daemon", "gorce-store-writer"])
         windows_owners = [
             package["name"]
             for package in metadata["packages"]

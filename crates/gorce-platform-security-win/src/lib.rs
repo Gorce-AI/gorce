@@ -11,7 +11,7 @@
 //! descriptor allocations are released with `LocalFree` before returning.
 
 use std::fmt;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -61,16 +61,33 @@ pub struct DurabilityReport {
 
 pub struct RuntimeDir {
     directory: File,
+    identity: ffi::CurrentIdentity,
 }
 
 impl RuntimeDir {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, SecurityError> {
         let root = path.as_ref().to_owned();
-        fs::create_dir_all(&root)?;
-        let directory = ffi::open_directory(&root)?;
-        ffi::secure(&directory)?;
-        ffi::validate_directory(&directory)?;
-        Ok(Self { directory })
+        let identity = ffi::current_identity()?;
+        let created = ffi::create_directory(&root, &identity)?;
+        let directory = match ffi::open_directory(&root, created) {
+            Ok(directory) => directory,
+            Err(error) => {
+                if created {
+                    let _ = ffi::remove_directory(&root);
+                }
+                return Err(error);
+            }
+        };
+        if let Err(error) = ffi::validate_directory(&directory, &identity) {
+            if created {
+                let _ = ffi::dispose(&directory);
+            }
+            return Err(error);
+        }
+        Ok(Self {
+            directory,
+            identity,
+        })
     }
 
     pub fn read_private(&self, name: &str) -> Result<Option<Vec<u8>>, SecurityError> {
@@ -97,14 +114,15 @@ impl RuntimeDir {
         write: bool,
     ) -> Result<Option<PrivateFile>, SecurityError> {
         validate_child_name(name)?;
-        let file = match ffi::open_child(&self.directory, name, write, false, false) {
+        let file = match ffi::open_child(&self.directory, name, write, false, false, &self.identity)
+        {
             Ok(file) => file,
             Err(SecurityError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
                 return Ok(None)
             }
             Err(error) => return Err(error),
         };
-        ffi::validate(&file)?;
+        ffi::validate(&file, &self.identity)?;
         Ok(Some(PrivateFile { file }))
     }
 
@@ -121,9 +139,15 @@ impl RuntimeDir {
         );
         validate_child_name(&temporary_name)?;
         let result = (|| {
-            let mut file = ffi::open_child(&self.directory, &temporary_name, true, true, true)?;
-            ffi::secure(&file)?;
-            ffi::validate(&file)?;
+            let mut file = ffi::open_child(
+                &self.directory,
+                &temporary_name,
+                true,
+                true,
+                true,
+                &self.identity,
+            )?;
+            ffi::validate(&file, &self.identity)?;
             file.write_all(contents)?;
             file.sync_all()?;
             ffi::replace(&self.directory, &file, name)?;
@@ -133,7 +157,14 @@ impl RuntimeDir {
             })
         })();
         if result.is_err() {
-            if let Ok(file) = ffi::open_child(&self.directory, &temporary_name, true, false, true) {
+            if let Ok(file) = ffi::open_child(
+                &self.directory,
+                &temporary_name,
+                true,
+                false,
+                true,
+                &self.identity,
+            ) {
                 let _ = ffi::dispose(&file);
             }
         }
@@ -142,15 +173,15 @@ impl RuntimeDir {
 
     pub fn lock(&self, name: &str) -> Result<LockGuard, SecurityError> {
         validate_child_name(name)?;
-        let file = match ffi::open_child(&self.directory, name, true, false, false) {
+        let file = match ffi::open_child(&self.directory, name, true, false, false, &self.identity)
+        {
             Ok(file) => file,
             Err(SecurityError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
-                ffi::open_child(&self.directory, name, true, true, false)?
+                ffi::open_child(&self.directory, name, true, true, false, &self.identity)?
             }
             Err(error) => return Err(error),
         };
-        ffi::secure(&file)?;
-        ffi::validate(&file)?;
+        ffi::validate(&file, &self.identity)?;
         match file.try_lock_exclusive() {
             Ok(()) => Ok(LockGuard { file }),
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => Err(
@@ -167,8 +198,8 @@ impl RuntimeDir {
                 directory_entry: DirectoryDurability::BestEffort,
             });
         }
-        let file = ffi::open_child(&self.directory, name, true, false, true)?;
-        ffi::validate(&file)?;
+        let file = ffi::open_child(&self.directory, name, true, false, true, &self.identity)?;
+        ffi::validate(&file, &self.identity)?;
         ffi::dispose(&file)?;
         drop(file);
         Ok(DurabilityReport {
@@ -250,32 +281,34 @@ mod ffi {
         FILE_RENAME_REPLACE_IF_EXISTS, FILE_SYNCHRONOUS_IO_NONALERT, FILE_WRITE_THROUGH,
     };
     use windows_sys::Win32::Foundation::{
-        CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, PSID,
-        UNICODE_STRING,
+        CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_NO_TOKEN, GENERIC_READ,
+        GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, PSID, TRUE, UNICODE_STRING,
     };
-    use windows_sys::Win32::Security::Authorization::{
-        GetSecurityInfo, SetSecurityInfo, SE_FILE_OBJECT,
-    };
+    use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
     use windows_sys::Win32::Security::{
         AclSizeInformation, AddAccessAllowedAce, EqualSid, GetAce, GetAclInformation, GetLengthSid,
-        GetSecurityDescriptorControl, GetTokenInformation, InitializeAcl, TokenUser,
-        ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION,
-        DACL_SECURITY_INFORMATION, INHERITED_ACE, OWNER_SECURITY_INFORMATION,
-        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SE_DACL_PROTECTED, TOKEN_QUERY,
-        TOKEN_USER,
+        GetSecurityDescriptorControl, GetTokenInformation, InitializeAcl,
+        InitializeSecurityDescriptor, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
+        SetSecurityDescriptorOwner, TokenUser, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION,
+        ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION, INHERITED_ACE, OWNER_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SE_DACL_PROTECTED,
+        TOKEN_QUERY, TOKEN_USER,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FileAttributeTagInfo, FileBasicInfo, FileDispositionInfo, FileRenameInfo,
-        GetFileInformationByHandleEx, SetFileInformationByHandle, CREATE_NEW, DELETE,
-        FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+        CreateDirectoryW, CreateFileW, FileAttributeTagInfo, FileBasicInfo, FileDispositionInfo,
+        FileRenameInfo, GetFileInformationByHandleEx, RemoveDirectoryW, SetFileInformationByHandle,
+        DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
         FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO, FILE_DISPOSITION_INFO,
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH,
         FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FILE_TYPE_UNKNOWN, OPEN_EXISTING, READ_CONTROL, WRITE_DAC,
+        FILE_TYPE_UNKNOWN, OPEN_EXISTING, READ_CONTROL, WRITE_DAC, WRITE_OWNER,
     };
     use windows_sys::Win32::System::Kernel::OBJ_CASE_INSENSITIVE;
     use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows_sys::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
+    };
     use windows_sys::Win32::System::IO::{IO_STATUS_BLOCK, IO_STATUS_BLOCK_0};
 
     struct OwnedHandle(HANDLE);
@@ -292,6 +325,37 @@ mod ffi {
         }
     }
 
+    pub(super) struct CurrentIdentity {
+        _token: OwnedHandle,
+        _user: Vec<usize>,
+        sid: PSID,
+    }
+
+    impl CurrentIdentity {
+        fn sid(&self) -> PSID {
+            self.sid
+        }
+    }
+
+    struct ProtectedSecurity {
+        descriptor: Vec<usize>,
+        _acl: Vec<u32>,
+    }
+
+    impl ProtectedSecurity {
+        fn descriptor(&mut self) -> PSECURITY_DESCRIPTOR {
+            self.descriptor.as_mut_ptr().cast()
+        }
+
+        fn attributes(&mut self) -> SECURITY_ATTRIBUTES {
+            SECURITY_ATTRIBUTES {
+                nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: self.descriptor().cast(),
+                bInheritHandle: 0,
+            }
+        }
+    }
+
     fn wide(path: &Path) -> Vec<u16> {
         path.as_os_str()
             .encode_wide()
@@ -303,8 +367,130 @@ mod ffi {
         file.as_raw_handle() as HANDLE
     }
 
-    pub(super) fn open_directory(path: &Path) -> Result<File, SecurityError> {
-        open(path, false, false, true)
+    pub(super) fn current_identity() -> Result<CurrentIdentity, SecurityError> {
+        let token = unsafe {
+            let mut token = 0;
+            if OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &mut token) != 0 {
+                token
+            } else {
+                if GetLastError() != ERROR_NO_TOKEN
+                    || OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0
+                {
+                    return Err(SecurityError::Io(io::Error::last_os_error()));
+                }
+                token
+            }
+        };
+        let token = OwnedHandle(token);
+        let mut needed = 0;
+        unsafe {
+            let _ = GetTokenInformation(token.0, TokenUser, null_mut(), 0, &mut needed);
+        }
+        if needed == 0 {
+            return Err(SecurityError::Security(
+                "could not size effective TokenUser information".to_owned(),
+            ));
+        }
+        let mut user = vec![0_usize; (needed as usize).div_ceil(size_of::<usize>())];
+        unsafe {
+            if GetTokenInformation(
+                token.0,
+                TokenUser,
+                user.as_mut_ptr().cast(),
+                (user.len() * size_of::<usize>()) as u32,
+                &mut needed,
+            ) == 0
+            {
+                return Err(SecurityError::Security(
+                    "could not read effective TokenUser information".to_owned(),
+                ));
+            }
+        }
+        let sid = unsafe { (&*user.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+        if sid.is_null() {
+            return Err(SecurityError::Security(
+                "effective TokenUser SID is missing".to_owned(),
+            ));
+        }
+        Ok(CurrentIdentity {
+            _token: token,
+            _user: user,
+            sid,
+        })
+    }
+
+    fn protected_security(identity: &CurrentIdentity) -> Result<ProtectedSecurity, SecurityError> {
+        unsafe {
+            let sid = identity.sid();
+            let sid_length = GetLengthSid(sid);
+            if sid_length == 0 {
+                return Err(SecurityError::Security(
+                    "effective TokenUser SID is invalid".to_owned(),
+                ));
+            }
+            let acl_length = size_of::<ACL>()
+                .saturating_add(size_of::<ACCESS_ALLOWED_ACE>())
+                .saturating_sub(size_of::<u32>())
+                .saturating_add(sid_length as usize);
+            let mut acl = vec![0_u32; acl_length.div_ceil(size_of::<u32>())];
+            let acl_ptr = acl.as_mut_ptr().cast::<ACL>();
+            let mut descriptor =
+                vec![0_usize; size_of::<SECURITY_DESCRIPTOR>().div_ceil(size_of::<usize>())];
+            let descriptor_ptr = descriptor.as_mut_ptr().cast::<SECURITY_DESCRIPTOR>();
+            if InitializeAcl(acl_ptr, acl_length as u32, ACL_REVISION) == 0
+                || AddAccessAllowedAce(acl_ptr, ACL_REVISION, FILE_ALL_ACCESS, sid) == 0
+                || InitializeSecurityDescriptor(descriptor_ptr.cast(), SECURITY_DESCRIPTOR_REVISION)
+                    == 0
+                || SetSecurityDescriptorOwner(descriptor_ptr.cast(), sid, 0) == 0
+                || SetSecurityDescriptorDacl(descriptor_ptr.cast(), TRUE, acl_ptr, 0) == 0
+                || SetSecurityDescriptorControl(
+                    descriptor_ptr.cast(),
+                    SE_DACL_PROTECTED,
+                    SE_DACL_PROTECTED,
+                ) == 0
+            {
+                return Err(SecurityError::Security(
+                    "could not build protected current-user security descriptor".to_owned(),
+                ));
+            }
+            Ok(ProtectedSecurity {
+                descriptor,
+                _acl: acl,
+            })
+        }
+    }
+
+    pub(super) fn create_directory(
+        path: &Path,
+        identity: &CurrentIdentity,
+    ) -> Result<bool, SecurityError> {
+        let path = wide(path);
+        let mut security = protected_security(identity)?;
+        let attributes = security.attributes();
+        let created = unsafe { CreateDirectoryW(path.as_ptr(), &attributes) };
+        if created != 0 {
+            return Ok(true);
+        }
+        let error = unsafe { GetLastError() };
+        if error == ERROR_ALREADY_EXISTS {
+            Ok(false)
+        } else {
+            Err(SecurityError::Io(io::Error::from_raw_os_error(
+                error as i32,
+            )))
+        }
+    }
+
+    pub(super) fn remove_directory(path: &Path) -> Result<(), SecurityError> {
+        let path = wide(path);
+        if unsafe { RemoveDirectoryW(path.as_ptr()) } == 0 {
+            return Err(SecurityError::Io(io::Error::last_os_error()));
+        }
+        Ok(())
+    }
+
+    pub(super) fn open_directory(path: &Path, write_owner: bool) -> Result<File, SecurityError> {
+        open(path, false, true, write_owner)
     }
 
     pub(super) fn open_child(
@@ -313,6 +499,7 @@ mod ffi {
         write: bool,
         create_new: bool,
         delete: bool,
+        identity: &CurrentIdentity,
     ) -> Result<File, SecurityError> {
         let name = name.encode_utf16().collect::<Vec<_>>();
         if name.is_empty() || name.len() > (u16::MAX as usize / 2) {
@@ -326,19 +513,27 @@ mod ffi {
             Buffer: name.as_ptr().cast_mut(),
         };
         let object_name = &mut unicode;
+        let mut security = if create_new {
+            Some(protected_security(identity)?)
+        } else {
+            None
+        };
         let attributes = OBJECT_ATTRIBUTES {
             Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
             RootDirectory: handle(directory),
             ObjectName: object_name as *const UNICODE_STRING,
             Attributes: OBJ_CASE_INSENSITIVE as u32,
-            SecurityDescriptor: std::ptr::null(),
+            SecurityDescriptor: security.as_mut().map_or(std::ptr::null(), |security| {
+                security.descriptor().cast_const()
+            }),
             SecurityQualityOfService: std::ptr::null(),
         };
         let access = GENERIC_READ
             | READ_CONTROL
             | WRITE_DAC
             | if write { GENERIC_WRITE } else { 0 }
-            | if delete { DELETE } else { 0 };
+            | if delete { DELETE } else { 0 }
+            | if create_new { WRITE_OWNER } else { 0 };
         let options = FILE_NON_DIRECTORY_FILE
             | FILE_OPEN_REPARSE_POINT
             | FILE_SYNCHRONOUS_IO_NONALERT
@@ -383,20 +578,16 @@ mod ffi {
     fn open(
         path: &Path,
         write: bool,
-        create_new: bool,
         directory: bool,
+        write_owner: bool,
     ) -> Result<File, SecurityError> {
         let path = wide(path);
         let access = GENERIC_READ
             | READ_CONTROL
             | WRITE_DAC
             | DELETE
-            | if write { GENERIC_WRITE } else { 0 };
-        let creation = if create_new {
-            CREATE_NEW
-        } else {
-            OPEN_EXISTING
-        };
+            | if write { GENERIC_WRITE } else { 0 }
+            | if write_owner { WRITE_OWNER } else { 0 };
         let flags = FILE_FLAG_OPEN_REPARSE_POINT
             | FILE_FLAG_WRITE_THROUGH
             | if directory {
@@ -413,7 +604,7 @@ mod ffi {
                 access,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 null_mut(),
-                creation,
+                OPEN_EXISTING,
                 flags,
                 0,
             );
@@ -467,41 +658,7 @@ mod ffi {
         Ok(())
     }
 
-    fn current_sid() -> Result<(OwnedHandle, Vec<usize>, PSID), SecurityError> {
-        unsafe {
-            let mut token: HANDLE = 0;
-            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
-                return Err(SecurityError::Security(
-                    "could not open current Windows token".to_owned(),
-                ));
-            }
-            let token = OwnedHandle(token);
-            let mut needed = 0;
-            let _ = GetTokenInformation(token.0, TokenUser, null_mut(), 0, &mut needed);
-            if needed == 0 {
-                return Err(SecurityError::Security(
-                    "could not size current Windows token".to_owned(),
-                ));
-            }
-            let mut buffer = vec![0_usize; (needed as usize).div_ceil(size_of::<usize>())];
-            if GetTokenInformation(
-                token.0,
-                TokenUser,
-                buffer.as_mut_ptr().cast(),
-                (buffer.len() * size_of::<usize>()) as u32,
-                &mut needed,
-            ) == 0
-            {
-                return Err(SecurityError::Security(
-                    "could not read current Windows token".to_owned(),
-                ));
-            }
-            let user = &*(buffer.as_ptr().cast::<TOKEN_USER>());
-            Ok((token, buffer, user.User.Sid))
-        }
-    }
-
-    pub(super) fn validate(file: &File) -> Result<(), SecurityError> {
+    pub(super) fn validate(file: &File, identity: &CurrentIdentity) -> Result<(), SecurityError> {
         reject_reparse(file)?;
         if unsafe { windows_sys::Win32::Storage::FileSystem::GetFileType(handle(file)) }
             == FILE_TYPE_UNKNOWN
@@ -510,7 +667,7 @@ mod ffi {
                 "opened Windows handle has no file type".to_owned(),
             ));
         }
-        let (_token, _buffer, sid) = current_sid()?;
+        let sid = identity.sid();
         unsafe {
             let mut owner: PSID = null_mut();
             let mut dacl: *mut ACL = null_mut();
@@ -603,8 +760,11 @@ mod ffi {
         }
     }
 
-    pub(super) fn validate_directory(file: &File) -> Result<(), SecurityError> {
-        validate(file)?;
+    pub(super) fn validate_directory(
+        file: &File,
+        identity: &CurrentIdentity,
+    ) -> Result<(), SecurityError> {
+        validate(file, identity)?;
         unsafe {
             let mut info = FILE_BASIC_INFO {
                 CreationTime: 0,
@@ -627,36 +787,6 @@ mod ffi {
             }
         }
         Ok(())
-    }
-
-    pub(super) fn secure(file: &File) -> Result<(), SecurityError> {
-        reject_reparse(file)?;
-        let (_token, _buffer, sid) = current_sid()?;
-        unsafe {
-            let sid_length = GetLengthSid(sid);
-            let acl_length = (size_of::<ACL>() + size_of::<ACCESS_ALLOWED_ACE>() - size_of::<u32>()
-                + sid_length as usize) as u32;
-            let mut acl_buffer = vec![0_u32; (acl_length as usize).div_ceil(size_of::<u32>())];
-            let acl = acl_buffer.as_mut_ptr().cast();
-            if sid_length == 0
-                || InitializeAcl(acl, acl_length, ACL_REVISION) == 0
-                || AddAccessAllowedAce(acl, ACL_REVISION, FILE_ALL_ACCESS, sid) == 0
-                || SetSecurityInfo(
-                    handle(file),
-                    SE_FILE_OBJECT,
-                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                    null_mut(),
-                    null_mut(),
-                    acl,
-                    null_mut(),
-                ) != 0
-            {
-                return Err(SecurityError::Security(
-                    "could not apply Windows current-user DACL".to_owned(),
-                ));
-            }
-        }
-        validate(file)
     }
 
     pub(super) fn replace(
@@ -755,13 +885,19 @@ mod tests {
         fs::create_dir_all(&target).unwrap();
         fs::write(target.join("secret"), b"outside").unwrap();
         let runtime = RuntimeDir::open(&root).unwrap();
-        symlink_file(target.join("secret"), root.join("secret")).expect(
-            "required Windows reparse-point prerequisite unavailable; native reparse coverage is inconclusive",
-        );
+        symlink_file(target.join("secret"), root.join("secret")).unwrap();
         assert!(runtime.open_private("secret", false).is_err());
 
         drop(runtime);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn existing_default_acl_runtime_root_is_rejected() {
+        let root = temporary_directory("broad");
+        fs::create_dir_all(&root).unwrap();
+        assert!(RuntimeDir::open(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 }

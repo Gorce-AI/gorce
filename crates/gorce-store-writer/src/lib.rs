@@ -11,6 +11,8 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use fs2::FileExt;
+#[cfg(windows)]
+use gorce_platform_security::SecureRuntime;
 use gorce_protocol::{
     Admission, AuthorityCommandKind, AuthorityCommandReceipt, AuthorityPolicy, AuthorityPrincipal,
     AuthorityProfileRevision, BlobRef, CommandCommit, CommandResultKind, EventBatch, EventBatchId,
@@ -436,6 +438,8 @@ fn ensure_regular_file(path: &Path, bound: &Path, allow_missing: bool) -> Result
 }
 
 fn set_directory_mode(path: &Path) -> Result<()> {
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -445,6 +449,8 @@ fn set_directory_mode(path: &Path) -> Result<()> {
 }
 
 fn set_file_mode(path: &Path) -> Result<()> {
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -454,8 +460,28 @@ fn set_file_mode(path: &Path) -> Result<()> {
 }
 
 fn sync_directory(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        // Windows has no Unix-equivalent directory fsync. File contents are
+        // flushed by the existing file sync/write-through paths; directory
+        // entry durability is explicitly best effort on this platform.
+        let _ = path;
+        return Ok(());
+    }
+    #[cfg(not(windows))]
     File::open(path)?.sync_all()?;
+    #[cfg(not(windows))]
     Ok(())
+}
+
+#[cfg(windows)]
+fn open_protected_state(path: &Path) -> Result<SecureRuntime> {
+    SecureRuntime::open(path).map_err(|error| {
+        StoreError::Io(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            error.to_string(),
+        ))
+    })
 }
 
 fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
@@ -492,16 +518,59 @@ struct StateLayout {
     tmp: PathBuf,
     index: PathBuf,
     lock: PathBuf,
+    #[cfg(windows)]
+    _state_security: SecureRuntime,
+    #[cfg(windows)]
+    _journal_security: SecureRuntime,
+    #[cfg(windows)]
+    _blobs_security: SecureRuntime,
+    #[cfg(windows)]
+    _cas_security: SecureRuntime,
+    #[cfg(windows)]
+    _tmp_security: SecureRuntime,
 }
 
 impl StateLayout {
     fn create(project_root: &Path) -> Result<Self> {
         let gorce = ensure_directory(&project_root.join(".gorce"), project_root)?;
-        let state = ensure_directory(&gorce.join("state"), project_root)?;
-        let journal = ensure_directory(&state.join(JOURNAL_DIRECTORY), &state)?;
-        let blobs = ensure_directory(&state.join(BLOB_DIRECTORY), &state)?;
-        let cas = ensure_directory(&blobs.join("sha256"), &state)?;
-        let tmp = ensure_directory(&blobs.join("tmp"), &state)?;
+        let state_path = gorce.join("state");
+        #[cfg(windows)]
+        let state_security = open_protected_state(&state_path)?;
+        #[cfg(windows)]
+        let state = state_path;
+        #[cfg(not(windows))]
+        let state = ensure_directory(&state_path, project_root)?;
+
+        let journal_path = state.join(JOURNAL_DIRECTORY);
+        let blobs_path = state.join(BLOB_DIRECTORY);
+        #[cfg(windows)]
+        let journal_security = open_protected_state(&journal_path)?;
+        #[cfg(windows)]
+        let journal = journal_path;
+        #[cfg(not(windows))]
+        let journal = ensure_directory(&journal_path, &state)?;
+
+        #[cfg(windows)]
+        let blobs_security = open_protected_state(&blobs_path)?;
+        #[cfg(windows)]
+        let blobs = blobs_path;
+        #[cfg(not(windows))]
+        let blobs = ensure_directory(&blobs_path, &state)?;
+
+        let cas_path = blobs.join("sha256");
+        let tmp_path = blobs.join("tmp");
+        #[cfg(windows)]
+        let cas_security = open_protected_state(&cas_path)?;
+        #[cfg(windows)]
+        let cas = cas_path;
+        #[cfg(not(windows))]
+        let cas = ensure_directory(&cas_path, &state)?;
+        #[cfg(windows)]
+        let tmp_security = open_protected_state(&tmp_path)?;
+        #[cfg(windows)]
+        let tmp = tmp_path;
+        #[cfg(not(windows))]
+        let tmp = ensure_directory(&tmp_path, &state)?;
         let index = state.join(INDEX_FILE);
         let lock = state.join(WRITER_LOCK_FILE);
         ensure_regular_file(&index, &state, true)?;
@@ -527,6 +596,16 @@ impl StateLayout {
             tmp,
             index,
             lock,
+            #[cfg(windows)]
+            _state_security: state_security,
+            #[cfg(windows)]
+            _journal_security: journal_security,
+            #[cfg(windows)]
+            _blobs_security: blobs_security,
+            #[cfg(windows)]
+            _cas_security: cas_security,
+            #[cfg(windows)]
+            _tmp_security: tmp_security,
         })
     }
 }
