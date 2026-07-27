@@ -2936,6 +2936,7 @@ mod tests {
             other => panic!("expected a live public event, got {other:?}"),
         }
         drop(subscription);
+        drop(project);
         drop(daemon);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(runtime).unwrap();
@@ -3183,6 +3184,7 @@ mod tests {
         );
         assert_eq!(concurrent.0.unwrap(), concurrent.1.unwrap());
         drop(service);
+        drop(project);
         drop(daemon);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(runtime).unwrap();
