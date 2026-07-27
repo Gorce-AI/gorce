@@ -286,7 +286,7 @@ mod ffi {
     use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
     use windows_sys::Wdk::Storage::FileSystem::{
         NtCreateFile, FILE_CREATE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
-        FILE_RENAME_REPLACE_IF_EXISTS, FILE_SYNCHRONOUS_IO_NONALERT, FILE_WRITE_THROUGH,
+        FILE_SYNCHRONOUS_IO_NONALERT, FILE_WRITE_THROUGH,
     };
     use windows_sys::Win32::Foundation::{
         CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_NO_TOKEN, GENERIC_READ,
@@ -985,32 +985,61 @@ mod ffi {
         Ok(())
     }
 
+    fn rename_info_buffer(destination: &str) -> Result<(Vec<usize>, u32, u32), SecurityError> {
+        let mut name: Vec<u16> = std::ffi::OsStr::new(destination).encode_wide().collect();
+        if name.is_empty() {
+            return Err(SecurityError::Invalid(
+                "protected replacement name is invalid".to_owned(),
+            ));
+        }
+        let name_bytes = name.len().checked_mul(size_of::<u16>()).ok_or_else(|| {
+            SecurityError::Invalid("protected replacement name is too long".to_owned())
+        })?;
+        let file_name_length = u32::try_from(name_bytes).map_err(|_| {
+            SecurityError::Invalid("protected replacement name is too long".to_owned())
+        })?;
+        name.push(0);
+        let size = size_of::<FILE_RENAME_INFO>()
+            .checked_add(name_bytes)
+            .ok_or_else(|| {
+                SecurityError::Invalid("protected rename buffer is too large".to_owned())
+            })?;
+        let buffer_size = u32::try_from(size).map_err(|_| {
+            SecurityError::Invalid("protected rename buffer is too large".to_owned())
+        })?;
+        let words = size.checked_add(size_of::<usize>() - 1).ok_or_else(|| {
+            SecurityError::Invalid("protected rename buffer is too large".to_owned())
+        })? / size_of::<usize>();
+        let mut buffer = vec![0_usize; words];
+        unsafe {
+            let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+            (*info).Anonymous = FILE_RENAME_INFO_0 { ReplaceIfExists: 1 };
+            (*info).RootDirectory = 0;
+            (*info).FileNameLength = file_name_length;
+            let file_name = buffer
+                .as_mut_ptr()
+                .cast::<u8>()
+                .add(std::mem::offset_of!(FILE_RENAME_INFO, FileName))
+                .cast::<u16>();
+            std::ptr::copy_nonoverlapping(name.as_ptr(), file_name, name.len());
+        }
+        Ok((buffer, file_name_length, buffer_size))
+    }
+
     pub(super) fn replace(
         directory: &File,
         source: &File,
         destination: &str,
     ) -> Result<(), SecurityError> {
-        let name: Vec<u16> = std::ffi::OsStr::new(destination).encode_wide().collect();
-        if name.is_empty() || name.len() > u32::MAX as usize / size_of::<u16>() {
-            return Err(SecurityError::Invalid(
-                "protected replacement name is invalid".to_owned(),
-            ));
-        }
-        let size = size_of::<FILE_RENAME_INFO>() + name.len().saturating_sub(1) * size_of::<u16>();
-        let mut buffer = vec![0_usize; size.div_ceil(size_of::<usize>())];
+        let (mut buffer, _file_name_length, buffer_size) = rename_info_buffer(destination)?;
         unsafe {
             let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
-            (*info).Anonymous = FILE_RENAME_INFO_0 {
-                Flags: FILE_RENAME_REPLACE_IF_EXISTS,
-            };
             (*info).RootDirectory = handle(directory);
-            (*info).FileNameLength = (name.len() * size_of::<u16>()) as u32;
-            std::ptr::copy_nonoverlapping(name.as_ptr(), (*info).FileName.as_mut_ptr(), name.len());
             if SetFileInformationByHandle(
                 handle(source),
                 FileRenameInfo,
                 info.cast::<c_void>(),
-                size as u32,
+                buffer_size,
             ) == 0
             {
                 return Err(SecurityError::Io(std::io::Error::last_os_error()));
@@ -1033,6 +1062,51 @@ mod ffi {
             }
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn rename_info_buffer_has_checked_layout_and_trailing_zero() {
+            let expected_name: Vec<u16> = std::ffi::OsStr::new("identity").encode_wide().collect();
+            let (buffer, file_name_length, declared_size) = rename_info_buffer("identity").unwrap();
+            let allocation_size = buffer.len() * size_of::<usize>();
+            let file_name_offset = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+            let file_name_end = file_name_offset
+                .checked_add(file_name_length as usize)
+                .unwrap();
+            let trailing_end = file_name_end.checked_add(size_of::<u16>()).unwrap();
+
+            assert_eq!(
+                file_name_length as usize,
+                expected_name.len() * size_of::<u16>()
+            );
+            assert_eq!(
+                declared_size as usize,
+                size_of::<FILE_RENAME_INFO>() + file_name_length as usize
+            );
+            assert!(allocation_size >= declared_size as usize);
+            assert!(file_name_end <= allocation_size);
+            assert!(trailing_end <= allocation_size);
+
+            unsafe {
+                let info = buffer.as_ptr().cast::<FILE_RENAME_INFO>();
+                assert_eq!((*info).FileNameLength, file_name_length);
+                assert_eq!((*info).Anonymous.ReplaceIfExists, 1);
+                assert_eq!((*info).RootDirectory, 0);
+                let file_name = buffer
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(file_name_offset)
+                    .cast::<u16>();
+                for (index, expected) in expected_name.iter().enumerate() {
+                    assert_eq!(*file_name.add(index), *expected);
+                }
+                assert_eq!(*file_name.add(expected_name.len()), 0);
+            }
+        }
     }
 }
 
