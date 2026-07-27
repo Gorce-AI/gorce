@@ -466,7 +466,7 @@ fn sync_directory(path: &Path) -> Result<()> {
         // flushed by the existing file sync/write-through paths; directory
         // entry durability is explicitly best effort on this platform.
         let _ = path;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(windows))]
     File::open(path)?.sync_all()?;
