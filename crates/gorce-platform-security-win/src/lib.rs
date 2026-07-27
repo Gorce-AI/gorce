@@ -310,7 +310,7 @@ mod ffi {
         FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO, FILE_DISPOSITION_INFO,
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH,
         FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FILE_TYPE_UNKNOWN, OPEN_EXISTING, READ_CONTROL, WRITE_DAC, WRITE_OWNER,
+        FILE_TYPE_UNKNOWN, OPEN_EXISTING, READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER,
     };
     use windows_sys::Win32::System::Kernel::OBJ_CASE_INSENSITIVE;
     use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
@@ -634,6 +634,7 @@ mod ffi {
         };
         let access = GENERIC_READ
             | READ_CONTROL
+            | SYNCHRONIZE
             | WRITE_DAC
             | if write { GENERIC_WRITE } else { 0 }
             | if delete { DELETE } else { 0 }
