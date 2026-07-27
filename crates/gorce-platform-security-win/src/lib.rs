@@ -7,7 +7,7 @@
 //! The only unsafe code in this crate is contained in `ffi`. That module owns
 //! all Win32 pointers and handles: every successful `CreateFileW` handle is
 //! transferred exactly once into `std::fs::File`, temporary rename buffers are
-//! borrowed only for the duration of `SetFileInformationByHandle`, and security
+//! borrowed only for the duration of `NtSetInformationFile`, and security
 //! descriptor allocations are released with `LocalFree` before returning.
 
 use std::fmt;
@@ -285,12 +285,13 @@ mod ffi {
     use std::mem::align_of;
     use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
     use windows_sys::Wdk::Storage::FileSystem::{
-        NtCreateFile, FILE_CREATE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
+        NtCreateFile, NtSetInformationFile, FILE_CREATE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
+        FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_RENAME_INFORMATION_0,
         FILE_SYNCHRONOUS_IO_NONALERT, FILE_WRITE_THROUGH,
     };
     use windows_sys::Win32::Foundation::{
-        CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_NO_TOKEN, GENERIC_READ,
-        GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, PSID, TRUE, UNICODE_STRING,
+        CloseHandle, GetLastError, RtlNtStatusToDosError, ERROR_ALREADY_EXISTS, ERROR_NO_TOKEN,
+        GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, PSID, TRUE, UNICODE_STRING,
     };
     use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
     use windows_sys::Win32::Security::{
@@ -305,12 +306,12 @@ mod ffi {
     };
     use windows_sys::Win32::Storage::FileSystem::{
         CreateDirectoryW, CreateFileW, FileAttributeTagInfo, FileBasicInfo, FileDispositionInfo,
-        FileRenameInfo, GetFileInformationByHandleEx, RemoveDirectoryW, SetFileInformationByHandle,
-        DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+        GetFileInformationByHandleEx, RemoveDirectoryW, SetFileInformationByHandle, DELETE,
+        FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
         FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO, FILE_DISPOSITION_INFO,
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH,
-        FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FILE_TYPE_UNKNOWN, OPEN_EXISTING, READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TYPE_UNKNOWN, OPEN_EXISTING,
+        READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER,
     };
     use windows_sys::Win32::System::Kernel::OBJ_CASE_INSENSITIVE;
     use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
@@ -318,7 +319,10 @@ mod ffi {
     use windows_sys::Win32::System::Threading::{
         GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
     };
+    use windows_sys::Win32::System::WindowsProgramming::FILE_INFORMATION_CLASS;
     use windows_sys::Win32::System::IO::{IO_STATUS_BLOCK, IO_STATUS_BLOCK_0};
+
+    const FILE_RENAME_INFORMATION_CLASS: FILE_INFORMATION_CLASS = 10;
 
     struct OwnedHandle(HANDLE);
     impl Drop for OwnedHandle {
@@ -999,7 +1003,7 @@ mod ffi {
             SecurityError::Invalid("protected replacement name is too long".to_owned())
         })?;
         name.push(0);
-        let size = size_of::<FILE_RENAME_INFO>()
+        let size = size_of::<FILE_RENAME_INFORMATION>()
             .checked_add(name_bytes)
             .ok_or_else(|| {
                 SecurityError::Invalid("protected rename buffer is too large".to_owned())
@@ -1012,14 +1016,14 @@ mod ffi {
         })? / size_of::<usize>();
         let mut buffer = vec![0_usize; words];
         unsafe {
-            let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
-            (*info).Anonymous = FILE_RENAME_INFO_0 { ReplaceIfExists: 1 };
+            let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+            (*info).Anonymous = FILE_RENAME_INFORMATION_0 { ReplaceIfExists: 1 };
             (*info).RootDirectory = 0;
             (*info).FileNameLength = file_name_length;
             let file_name = buffer
                 .as_mut_ptr()
                 .cast::<u8>()
-                .add(std::mem::offset_of!(FILE_RENAME_INFO, FileName))
+                .add(std::mem::offset_of!(FILE_RENAME_INFORMATION, FileName))
                 .cast::<u16>();
             std::ptr::copy_nonoverlapping(name.as_ptr(), file_name, name.len());
         }
@@ -1032,17 +1036,25 @@ mod ffi {
         destination: &str,
     ) -> Result<(), SecurityError> {
         let (mut buffer, _file_name_length, buffer_size) = rename_info_buffer(destination)?;
+        let mut status = IO_STATUS_BLOCK {
+            Anonymous: IO_STATUS_BLOCK_0 { Status: 0 },
+            Information: 0,
+        };
         unsafe {
-            let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+            let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
             (*info).RootDirectory = handle(directory);
-            if SetFileInformationByHandle(
+            let result = NtSetInformationFile(
                 handle(source),
-                FileRenameInfo,
-                info.cast::<c_void>(),
+                &mut status,
+                info.cast(),
                 buffer_size,
-            ) == 0
-            {
-                return Err(SecurityError::Io(std::io::Error::last_os_error()));
+                FILE_RENAME_INFORMATION_CLASS,
+            );
+            if result < 0 {
+                let error = RtlNtStatusToDosError(result);
+                return Err(SecurityError::Io(io::Error::from_raw_os_error(
+                    error as i32,
+                )));
             }
         }
         Ok(())
@@ -1073,7 +1085,7 @@ mod ffi {
             let expected_name: Vec<u16> = std::ffi::OsStr::new("identity").encode_wide().collect();
             let (buffer, file_name_length, declared_size) = rename_info_buffer("identity").unwrap();
             let allocation_size = buffer.len() * size_of::<usize>();
-            let file_name_offset = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+            let file_name_offset = std::mem::offset_of!(FILE_RENAME_INFORMATION, FileName);
             let file_name_end = file_name_offset
                 .checked_add(file_name_length as usize)
                 .unwrap();
@@ -1085,14 +1097,14 @@ mod ffi {
             );
             assert_eq!(
                 declared_size as usize,
-                size_of::<FILE_RENAME_INFO>() + file_name_length as usize
+                size_of::<FILE_RENAME_INFORMATION>() + file_name_length as usize
             );
             assert!(allocation_size >= declared_size as usize);
             assert!(file_name_end <= allocation_size);
             assert!(trailing_end <= allocation_size);
 
             unsafe {
-                let info = buffer.as_ptr().cast::<FILE_RENAME_INFO>();
+                let info = buffer.as_ptr().cast::<FILE_RENAME_INFORMATION>();
                 assert_eq!((*info).FileNameLength, file_name_length);
                 assert_eq!((*info).Anonymous.ReplaceIfExists, 1);
                 assert_eq!((*info).RootDirectory, 0);
