@@ -510,6 +510,20 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
     result
 }
 
+fn is_lock_contention(error: &io::Error) -> bool {
+    if error.kind() == io::ErrorKind::WouldBlock {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        matches!(error.raw_os_error(), Some(32 | 33))
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 struct StateLayout {
     state: PathBuf,
     journal: PathBuf,
@@ -619,23 +633,30 @@ struct WriterLock {
 impl WriterLock {
     fn acquire(path: &Path, state: &Path) -> Result<Self> {
         ensure_regular_file(path, state, true)?;
-        let file = OpenOptions::new()
+        let file = match OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(path)?;
+            .open(path)
+        {
+            Ok(file) => file,
+            Err(error) if is_lock_contention(&error) => {
+                return Err(StoreError::StoreAlreadyLocked {
+                    path: path.to_owned(),
+                })
+            }
+            Err(error) => return Err(error.into()),
+        };
         set_file_mode(path)?;
         match file.try_lock_exclusive() {
             Ok(()) => Ok(Self {
                 file,
                 path: path.to_owned(),
             }),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                Err(StoreError::StoreAlreadyLocked {
-                    path: path.to_owned(),
-                })
-            }
+            Err(error) if is_lock_contention(&error) => Err(StoreError::StoreAlreadyLocked {
+                path: path.to_owned(),
+            }),
             Err(error) => Err(error.into()),
         }
     }
@@ -4769,14 +4790,38 @@ mod tests {
         let directory = temporary_directory("lock");
         let project_id = uuid::Uuid::now_v7();
         let first = ProjectStoreWriter::open(&directory, project_id).unwrap();
+        let expected_lock_path =
+            fs::canonicalize(directory.join(STATE_DIRECTORY).join(WRITER_LOCK_FILE)).unwrap();
         let error = match ProjectStoreWriter::open(&directory, project_id) {
             Ok(_) => panic!("second opener unexpectedly succeeded"),
             Err(error) => error,
         };
-        assert!(matches!(error, StoreError::StoreAlreadyLocked { .. }));
+        match error {
+            StoreError::StoreAlreadyLocked { path } => assert_eq!(path, expected_lock_path),
+            other => panic!("second opener returned unexpected error: {other:?}"),
+        }
         drop(first);
         assert!(ProjectStoreWriter::open(&directory, project_id).is_ok());
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn lock_contention_predicate_maps_portable_and_non_contention_errors() {
+        assert!(is_lock_contention(&io::Error::from(
+            io::ErrorKind::WouldBlock
+        )));
+        assert!(!is_lock_contention(&io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "access denied",
+        )));
+        assert!(!is_lock_contention(&io::Error::from_raw_os_error(5)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn lock_contention_predicate_maps_windows_lock_errors() {
+        assert!(is_lock_contention(&io::Error::from_raw_os_error(32)));
+        assert!(is_lock_contention(&io::Error::from_raw_os_error(33)));
     }
 
     #[cfg(unix)]
