@@ -270,9 +270,9 @@ mod unix {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::PermissionsExt;
 
-    const S_IFMT: u16 = 0o170000;
-    const S_IFREG: u16 = 0o100000;
-    const S_IFDIR: u16 = 0o040000;
+    const S_IFMT: u32 = 0o170000;
+    const S_IFREG: u32 = 0o100000;
+    const S_IFDIR: u32 = 0o040000;
 
     pub(super) struct RuntimeDir {
         directory: File,
@@ -562,9 +562,10 @@ mod unix {
 
     fn validate_directory(file: &File) -> Result<(), SecurityError> {
         let stat = rfs::fstat(file.as_fd())?;
+        let mode = stat.st_mode as u32;
         if stat.st_uid != geteuid().as_raw()
-            || stat.st_mode & S_IFMT != S_IFDIR
-            || stat.st_mode & 0o077 != 0
+            || mode & S_IFMT != S_IFDIR
+            || mode & 0o077 != 0
             || stat.st_nlink < 2
         {
             return Err(SecurityError::Security(
@@ -576,7 +577,8 @@ mod unix {
 
     fn validate_directory_component(file: &File) -> Result<(), SecurityError> {
         let stat = rfs::fstat(file.as_fd())?;
-        if stat.st_mode & S_IFMT != S_IFDIR || stat.st_nlink < 2 {
+        let mode = stat.st_mode as u32;
+        if mode & S_IFMT != S_IFDIR || stat.st_nlink < 2 {
             return Err(SecurityError::Security(
                 "runtime path component failed descriptor type/link validation".to_owned(),
             ));
@@ -586,9 +588,10 @@ mod unix {
 
     fn validate_file(file: &File) -> Result<(), SecurityError> {
         let stat = rfs::fstat(file.as_fd())?;
+        let mode = stat.st_mode as u32;
         if stat.st_uid != geteuid().as_raw()
-            || stat.st_mode & S_IFMT != S_IFREG
-            || stat.st_mode & 0o077 != 0
+            || mode & S_IFMT != S_IFREG
+            || mode & 0o077 != 0
             || stat.st_nlink != 1
         {
             return Err(SecurityError::Security(

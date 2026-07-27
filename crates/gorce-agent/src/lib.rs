@@ -131,7 +131,10 @@ mod tests {
 
     #[test]
     fn default_public_surface_has_no_authority_or_runtime_exports() {
-        let source = include_str!("lib.rs")
+        let normalized_source = include_str!("lib.rs")
+            .replace("\r\n", "\n")
+            .replace('\r', "\n");
+        let source = normalized_source
             .split("#[cfg(test)]\n#[doc(hidden)]\npub mod test_support")
             .next()
             .expect("test-support module marker");
