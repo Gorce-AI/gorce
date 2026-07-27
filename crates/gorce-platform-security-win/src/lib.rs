@@ -208,6 +208,13 @@ impl RuntimeDir {
     }
 }
 
+fn assert_runtime_dir_send_sync() {
+    fn assert<T: Send + Sync>() {}
+    assert::<RuntimeDir>();
+}
+
+const _: fn() = assert_runtime_dir_send_sync;
+
 pub struct PrivateFile {
     file: File,
 }
@@ -275,6 +282,7 @@ mod ffi {
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
     use std::ptr::null_mut;
 
+    use std::mem::align_of;
     use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
     use windows_sys::Wdk::Storage::FileSystem::{
         NtCreateFile, FILE_CREATE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
@@ -286,13 +294,14 @@ mod ffi {
     };
     use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
     use windows_sys::Win32::Security::{
-        AclSizeInformation, AddAccessAllowedAce, EqualSid, GetAce, GetAclInformation, GetLengthSid,
-        GetSecurityDescriptorControl, GetTokenInformation, InitializeAcl,
-        InitializeSecurityDescriptor, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
-        SetSecurityDescriptorOwner, TokenUser, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION,
-        ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION, INHERITED_ACE, OWNER_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SE_DACL_PROTECTED,
-        TOKEN_QUERY, TOKEN_USER,
+        AclSizeInformation, AddAccessAllowedAce, CopySid, EqualSid, GetAce, GetAclInformation,
+        GetLengthSid, GetSecurityDescriptorControl, GetTokenInformation, InitializeAcl,
+        InitializeSecurityDescriptor, IsValidSid, SetSecurityDescriptorControl,
+        SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, TokenUser, ACCESS_ALLOWED_ACE,
+        ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, CONTAINER_INHERIT_ACE,
+        DACL_SECURITY_INFORMATION, INHERITED_ACE, INHERIT_ONLY_ACE, NO_PROPAGATE_INHERIT_ACE,
+        OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+        SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, SID, TOKEN_QUERY, TOKEN_USER,
     };
     use windows_sys::Win32::Storage::FileSystem::{
         CreateDirectoryW, CreateFileW, FileAttributeTagInfo, FileBasicInfo, FileDispositionInfo,
@@ -326,20 +335,20 @@ mod ffi {
     }
 
     pub(super) struct CurrentIdentity {
-        _token: OwnedHandle,
-        _user: Vec<usize>,
-        sid: PSID,
+        sid: Box<[u32]>,
+        sid_len: u32,
     }
 
     impl CurrentIdentity {
-        fn sid(&self) -> PSID {
-            self.sid
+        fn sid_ptr(&self) -> PSID {
+            self.sid.as_ptr().cast_mut().cast()
         }
     }
 
     struct ProtectedSecurity {
-        descriptor: Vec<usize>,
-        _acl: Vec<u32>,
+        _owner: Box<[u32]>,
+        descriptor: Box<[usize]>,
+        _acl: Box<[u32]>,
     }
 
     impl ProtectedSecurity {
@@ -391,14 +400,24 @@ mod ffi {
                 "could not size effective TokenUser information".to_owned(),
             ));
         }
-        let mut user = vec![0_usize; (needed as usize).div_ceil(size_of::<usize>())];
+        let word_count = (needed as usize).div_ceil(size_of::<usize>());
+        let mut user = vec![0_usize; word_count];
+        let user_capacity = user.len().checked_mul(size_of::<usize>()).ok_or_else(|| {
+            SecurityError::Security("effective TokenUser buffer size overflowed".to_owned())
+        })?;
+        if user_capacity > u32::MAX as usize {
+            return Err(SecurityError::Security(
+                "effective TokenUser buffer is too large".to_owned(),
+            ));
+        }
+        let mut returned = 0;
         unsafe {
             if GetTokenInformation(
                 token.0,
                 TokenUser,
                 user.as_mut_ptr().cast(),
-                (user.len() * size_of::<usize>()) as u32,
-                &mut needed,
+                user_capacity as u32,
+                &mut returned,
             ) == 0
             {
                 return Err(SecurityError::Security(
@@ -406,26 +425,110 @@ mod ffi {
                 ));
             }
         }
-        let sid = unsafe { (&*user.as_ptr().cast::<TOKEN_USER>()).User.Sid };
-        if sid.is_null() {
+        let used = usize::try_from(returned).map_err(|_| {
+            SecurityError::Security("effective TokenUser size was invalid".to_owned())
+        })?;
+        let (sid, sid_len) = copy_token_user_sid(&user, used, user_capacity)?;
+        drop(user);
+        drop(token);
+        Ok(CurrentIdentity { sid, sid_len })
+    }
+
+    fn copy_token_user_sid(
+        user: &[usize],
+        used: usize,
+        capacity: usize,
+    ) -> Result<(Box<[u32]>, u32), SecurityError> {
+        if used < size_of::<TOKEN_USER>() || used > capacity || user.is_empty() {
+            return Err(SecurityError::Security(
+                "effective TokenUser buffer bounds are invalid".to_owned(),
+            ));
+        }
+        let start = user.as_ptr() as usize;
+        let end = start.checked_add(used).ok_or_else(|| {
+            SecurityError::Security("effective TokenUser address overflowed".to_owned())
+        })?;
+        let source = unsafe { (&*user.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+        if source.is_null() {
             return Err(SecurityError::Security(
                 "effective TokenUser SID is missing".to_owned(),
             ));
         }
-        Ok(CurrentIdentity {
-            _token: token,
-            _user: user,
-            sid,
-        })
+        let source_start = source as usize;
+        let minimum_sid_len = size_of::<SID>() - size_of::<u32>();
+        if source_start < start
+            || source_start % align_of::<u32>() != 0
+            || match source_start.checked_add(minimum_sid_len) {
+                Some(value) => value > end,
+                None => true,
+            }
+        {
+            return Err(SecurityError::Security(
+                "effective TokenUser SID is outside its buffer".to_owned(),
+            ));
+        }
+        let sub_authority_count = unsafe { *((source_start + 1) as *const u8) } as usize;
+        let expected_len = minimum_sid_len
+            .checked_add(
+                sub_authority_count
+                    .checked_mul(size_of::<u32>())
+                    .ok_or_else(|| {
+                        SecurityError::Security(
+                            "effective TokenUser SID length overflowed".to_owned(),
+                        )
+                    })?,
+            )
+            .ok_or_else(|| {
+                SecurityError::Security("effective TokenUser SID length overflowed".to_owned())
+            })?;
+        let source_end = source_start.checked_add(expected_len).ok_or_else(|| {
+            SecurityError::Security("effective TokenUser SID bounds overflowed".to_owned())
+        })?;
+        if source_end > end || expected_len > u32::MAX as usize {
+            return Err(SecurityError::Security(
+                "effective TokenUser SID exceeds its buffer".to_owned(),
+            ));
+        }
+        unsafe {
+            if IsValidSid(source) == 0 || GetLengthSid(source) as usize != expected_len {
+                return Err(SecurityError::Security(
+                    "effective TokenUser SID failed validation".to_owned(),
+                ));
+            }
+        }
+        let sid_len = expected_len as u32;
+        let mut owned = vec![0_u32; expected_len.div_ceil(size_of::<u32>())].into_boxed_slice();
+        let destination = owned.as_mut_ptr().cast();
+        unsafe {
+            if CopySid(sid_len, destination, source) == 0
+                || IsValidSid(destination) == 0
+                || GetLengthSid(destination) != sid_len
+            {
+                return Err(SecurityError::Security(
+                    "copied effective TokenUser SID failed validation".to_owned(),
+                ));
+            }
+        }
+        Ok((owned, sid_len))
     }
 
     fn protected_security(identity: &CurrentIdentity) -> Result<ProtectedSecurity, SecurityError> {
         unsafe {
-            let sid = identity.sid();
-            let sid_length = GetLengthSid(sid);
+            let sid_length = identity.sid_len;
             if sid_length == 0 {
                 return Err(SecurityError::Security(
                     "effective TokenUser SID is invalid".to_owned(),
+                ));
+            }
+            let mut owner =
+                vec![0_u32; (sid_length as usize).div_ceil(size_of::<u32>())].into_boxed_slice();
+            let owner_sid = owner.as_mut_ptr().cast();
+            if CopySid(sid_length, owner_sid, identity.sid_ptr()) == 0
+                || IsValidSid(owner_sid) == 0
+                || GetLengthSid(owner_sid) != sid_length
+            {
+                return Err(SecurityError::Security(
+                    "could not clone effective TokenUser SID".to_owned(),
                 ));
             }
             let acl_length = size_of::<ACL>()
@@ -438,10 +541,10 @@ mod ffi {
                 vec![0_usize; size_of::<SECURITY_DESCRIPTOR>().div_ceil(size_of::<usize>())];
             let descriptor_ptr = descriptor.as_mut_ptr().cast::<SECURITY_DESCRIPTOR>();
             if InitializeAcl(acl_ptr, acl_length as u32, ACL_REVISION) == 0
-                || AddAccessAllowedAce(acl_ptr, ACL_REVISION, FILE_ALL_ACCESS, sid) == 0
+                || AddAccessAllowedAce(acl_ptr, ACL_REVISION, FILE_ALL_ACCESS, owner_sid) == 0
                 || InitializeSecurityDescriptor(descriptor_ptr.cast(), SECURITY_DESCRIPTOR_REVISION)
                     == 0
-                || SetSecurityDescriptorOwner(descriptor_ptr.cast(), sid, 0) == 0
+                || SetSecurityDescriptorOwner(descriptor_ptr.cast(), owner_sid, 0) == 0
                 || SetSecurityDescriptorDacl(descriptor_ptr.cast(), TRUE, acl_ptr, 0) == 0
                 || SetSecurityDescriptorControl(
                     descriptor_ptr.cast(),
@@ -454,8 +557,9 @@ mod ffi {
                 ));
             }
             Ok(ProtectedSecurity {
-                descriptor,
-                _acl: acl,
+                _owner: owner,
+                descriptor: descriptor.into_boxed_slice(),
+                _acl: acl.into_boxed_slice(),
             })
         }
     }
@@ -667,7 +771,7 @@ mod ffi {
                 "opened Windows handle has no file type".to_owned(),
             ));
         }
-        let sid = identity.sid();
+        let sid = identity.sid_ptr();
         unsafe {
             let mut owner: PSID = null_mut();
             let mut dacl: *mut ACL = null_mut();
@@ -720,35 +824,51 @@ mod ffi {
                     {
                         Err(SecurityError::Security("Windows DACL is empty".to_owned()))
                     } else {
-                        let mut valid = true;
-                        let mut full_access = false;
-                        for index in 0..info.AceCount {
-                            let mut ace_ptr: *mut c_void = null_mut();
-                            if GetAce(dacl, index, &mut ace_ptr) == 0 || ace_ptr.is_null() {
-                                valid = false;
-                                break;
-                            }
-                            let header = &*(ace_ptr.cast::<ACE_HEADER>());
-                            let ace = &*(ace_ptr.cast::<ACCESS_ALLOWED_ACE>());
-                            if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8
-                                || (header.AceFlags as u32) & INHERITED_ACE != 0
-                                || header.AceSize < size_of::<ACCESS_ALLOWED_ACE>() as u16
-                                || EqualSid((&ace.SidStart as *const u32).cast_mut().cast(), sid)
-                                    == 0
-                            {
-                                valid = false;
-                                break;
-                            }
-                            if ace.Mask & FILE_ALL_ACCESS == FILE_ALL_ACCESS {
-                                full_access = true;
-                            }
-                        }
-                        if valid && full_access {
-                            Ok(())
-                        } else {
+                        let acl_start = dacl as usize;
+                        let acl_size = (*dacl).AclSize as usize;
+                        let acl_bytes = info.AclBytesInUse as usize;
+                        let acl_end = acl_start.checked_add(acl_bytes);
+                        if acl_size < size_of::<ACL>()
+                            || acl_bytes < size_of::<ACL>()
+                            || acl_bytes > acl_size
+                            || acl_end.is_none()
+                        {
                             Err(SecurityError::Security(
-                                "Windows DACL is not current-user-only".to_owned(),
+                                "Windows DACL bounds are invalid".to_owned(),
                             ))
+                        } else {
+                            let mut valid = true;
+                            let mut full_access = false;
+                            let acl_end = acl_end.unwrap_or(acl_start);
+                            for index in 0..info.AceCount {
+                                let mut ace_ptr: *mut c_void = null_mut();
+                                if GetAce(dacl, index, &mut ace_ptr) == 0 || ace_ptr.is_null() {
+                                    valid = false;
+                                    break;
+                                }
+                                let ace_sid = match validated_ace_sid(ace_ptr, acl_end) {
+                                    Ok(ace_sid) => ace_sid,
+                                    Err(_) => {
+                                        valid = false;
+                                        break;
+                                    }
+                                };
+                                let ace = &*(ace_ptr.cast::<ACCESS_ALLOWED_ACE>());
+                                if EqualSid(ace_sid, sid) == 0 {
+                                    valid = false;
+                                    break;
+                                }
+                                if ace.Mask & FILE_ALL_ACCESS == FILE_ALL_ACCESS {
+                                    full_access = true;
+                                }
+                            }
+                            if valid && full_access {
+                                Ok(())
+                            } else {
+                                Err(SecurityError::Security(
+                                    "Windows DACL is not current-user-only".to_owned(),
+                                ))
+                            }
                         }
                     }
                 }
@@ -758,6 +878,81 @@ mod ffi {
             }
             result
         }
+    }
+
+    fn validated_ace_sid(ace_ptr: *mut c_void, acl_end: usize) -> Result<PSID, SecurityError> {
+        let ace_start = ace_ptr as usize;
+        let header_end = ace_start
+            .checked_add(size_of::<ACE_HEADER>())
+            .ok_or_else(|| {
+                SecurityError::Security("Windows ACE header bounds overflowed".to_owned())
+            })?;
+        if header_end > acl_end {
+            return Err(SecurityError::Security(
+                "Windows ACE header exceeds the DACL".to_owned(),
+            ));
+        }
+        let header = unsafe { &*(ace_ptr.cast::<ACE_HEADER>()) };
+        let forbidden_flags = (CONTAINER_INHERIT_ACE
+            | INHERITED_ACE
+            | INHERIT_ONLY_ACE
+            | NO_PROPAGATE_INHERIT_ACE
+            | OBJECT_INHERIT_ACE) as u8;
+        let ace_size = header.AceSize as usize;
+        let ace_end = ace_start
+            .checked_add(ace_size)
+            .ok_or_else(|| SecurityError::Security("Windows ACE bounds overflowed".to_owned()))?;
+        if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8
+            || header.AceFlags & forbidden_flags != 0
+            || ace_size < size_of::<ACCESS_ALLOWED_ACE>()
+            || ace_end > acl_end
+        {
+            return Err(SecurityError::Security(
+                "Windows ACE header or inheritance is invalid".to_owned(),
+            ));
+        }
+        let sid_offset = size_of::<ACCESS_ALLOWED_ACE>() - size_of::<u32>();
+        let sid_start = ace_start.checked_add(sid_offset).ok_or_else(|| {
+            SecurityError::Security("Windows ACE SID offset overflowed".to_owned())
+        })?;
+        let minimum_sid_len = size_of::<SID>() - size_of::<u32>();
+        let sid_header_end = sid_start.checked_add(minimum_sid_len).ok_or_else(|| {
+            SecurityError::Security("Windows ACE SID bounds overflowed".to_owned())
+        })?;
+        if sid_start % align_of::<u32>() != 0 || sid_header_end > ace_end {
+            return Err(SecurityError::Security(
+                "Windows ACE SID is outside the ACE".to_owned(),
+            ));
+        }
+        let sub_authority_count = unsafe { *((sid_start + 1) as *const u8) } as usize;
+        let sid_len = minimum_sid_len
+            .checked_add(
+                sub_authority_count
+                    .checked_mul(size_of::<u32>())
+                    .ok_or_else(|| {
+                        SecurityError::Security("Windows ACE SID length overflowed".to_owned())
+                    })?,
+            )
+            .ok_or_else(|| {
+                SecurityError::Security("Windows ACE SID length overflowed".to_owned())
+            })?;
+        let sid_end = sid_start.checked_add(sid_len).ok_or_else(|| {
+            SecurityError::Security("Windows ACE SID bounds overflowed".to_owned())
+        })?;
+        if sid_end > ace_end || sid_len > u32::MAX as usize {
+            return Err(SecurityError::Security(
+                "Windows ACE SID exceeds its ACE".to_owned(),
+            ));
+        }
+        let sid = sid_start as PSID;
+        unsafe {
+            if IsValidSid(sid) == 0 || GetLengthSid(sid) as usize != sid_len {
+                return Err(SecurityError::Security(
+                    "Windows ACE SID failed validation".to_owned(),
+                ));
+            }
+        }
+        Ok(sid)
     }
 
     pub(super) fn validate_directory(
@@ -898,6 +1093,18 @@ mod tests {
         let root = temporary_directory("broad");
         fs::create_dir_all(&root).unwrap();
         assert!(RuntimeDir::open(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runtime_dir_moves_across_threads_with_private_state() {
+        let root = temporary_directory("threaded");
+        let runtime = RuntimeDir::open(&root).unwrap();
+        let worker = std::thread::spawn(move || {
+            runtime.replace_private("threaded", b"ok").unwrap();
+            runtime.read_private("threaded").unwrap().unwrap()
+        });
+        assert_eq!(worker.join().unwrap(), b"ok");
         fs::remove_dir_all(root).unwrap();
     }
 }
