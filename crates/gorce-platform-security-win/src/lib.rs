@@ -609,18 +609,19 @@ mod ffi {
         delete: bool,
         identity: &CurrentIdentity,
     ) -> Result<File, SecurityError> {
-        let name = name.encode_utf16().collect::<Vec<_>>();
-        if name.is_empty() || name.len() > (u16::MAX as usize / 2) {
+        let mut name = name.encode_utf16().collect::<Vec<_>>();
+        if name.is_empty() || name.len() >= (u16::MAX as usize / 2) {
             return Err(SecurityError::Invalid(
                 "protected runtime child name is too long".to_owned(),
             ));
         }
-        let mut unicode = UNICODE_STRING {
-            Length: (name.len() * size_of::<u16>()) as u16,
-            MaximumLength: (name.len() * size_of::<u16>()) as u16,
+        let name_bytes = name.len() * size_of::<u16>();
+        name.push(0);
+        let unicode = UNICODE_STRING {
+            Length: name_bytes as u16,
+            MaximumLength: (name_bytes + size_of::<u16>()) as u16,
             Buffer: name.as_ptr().cast_mut(),
         };
-        let object_name = &mut unicode;
         let mut security = if create_new {
             Some(protected_security(identity)?)
         } else {
@@ -629,7 +630,7 @@ mod ffi {
         let attributes = OBJECT_ATTRIBUTES {
             Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
             RootDirectory: handle(directory),
-            ObjectName: object_name as *const UNICODE_STRING,
+            ObjectName: &unicode,
             Attributes: OBJ_CASE_INSENSITIVE as u32,
             SecurityDescriptor: security.as_mut().map_or(std::ptr::null(), |security| {
                 security.descriptor().cast_const()
@@ -643,8 +644,16 @@ mod ffi {
             | if write { GENERIC_WRITE } else { 0 }
             | if delete { DELETE } else { 0 }
             | if create_new { WRITE_OWNER } else { 0 };
+        // FILE_OPEN_REPARSE_POINT is for opening an existing reparse point;
+        // combining it with FILE_CREATE is rejected by Windows on the
+        // create-new path. FILE_CREATE cannot follow an existing final name,
+        // while existing opens retain the no-follow behavior below.
         let options = FILE_NON_DIRECTORY_FILE
-            | FILE_OPEN_REPARSE_POINT
+            | if create_new {
+                0
+            } else {
+                FILE_OPEN_REPARSE_POINT
+            }
             | FILE_SYNCHRONOUS_IO_NONALERT
             | FILE_WRITE_THROUGH;
         let disposition = if create_new { FILE_CREATE } else { FILE_OPEN };
@@ -1141,20 +1150,33 @@ mod tests {
     }
 
     #[test]
-    fn native_handle_relative_replace_dispose_and_durability() {
+    fn native_create_new_reopen_replace_dispose_and_durability() {
         let root = temporary_directory("native");
         let runtime = RuntimeDir::open(&root).unwrap();
+
+        let lock = runtime.lock("created").unwrap();
+        drop(lock);
+        assert_eq!(runtime.read_private("created").unwrap().unwrap(), b"");
 
         let first = runtime.replace_private("identity", b"first").unwrap();
         assert_eq!(first.directory_entry, DirectoryDurability::BestEffort);
         assert_eq!(runtime.read_private("identity").unwrap().unwrap(), b"first");
-        runtime.replace_private("identity", b"second").unwrap();
+        let second = runtime.replace_private("identity", b"second").unwrap();
+        assert_eq!(second.directory_entry, DirectoryDurability::BestEffort);
         assert_eq!(
             runtime.read_private("identity").unwrap().unwrap(),
             b"second"
         );
-        runtime.remove_private("identity").unwrap();
+        assert_eq!(
+            runtime.remove_private("identity").unwrap().directory_entry,
+            DirectoryDurability::BestEffort
+        );
+        assert_eq!(
+            runtime.remove_private("created").unwrap().directory_entry,
+            DirectoryDurability::BestEffort
+        );
         assert!(runtime.read_private("identity").unwrap().is_none());
+        assert!(runtime.read_private("created").unwrap().is_none());
 
         drop(runtime);
         fs::remove_dir_all(root).unwrap();

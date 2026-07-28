@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"host-3","method":"operation.cancel","params":{"invocation_id":"invocation-1","reason":"timeout"}}

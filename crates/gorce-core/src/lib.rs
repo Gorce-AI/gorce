@@ -5,6 +5,7 @@ pub mod error;
 pub mod goal;
 pub mod plan;
 pub mod promotion;
+pub mod provider;
 pub mod task;
 pub mod workstream;
 
@@ -18,6 +19,11 @@ pub use error::{
 pub use goal::{GoalAggregate, GoalRevisionDraft};
 pub use plan::{PlanAggregate, PlanRevisionDraft};
 pub use promotion::{merge_plan_promotion, normalize_promotion_mappings, PlanPromotion};
+pub use provider::{
+    approval_tuple_matches, compare_approval_tuple, decide_lease, lifecycle_transition,
+    validate_capability_subset, LeaseDenial, ProviderApprovalTuple, ProviderCapabilitySet,
+    ProviderLifecycle, ProviderPolicyError,
+};
 pub use task::{
     readiness_projection, AddEdge, CancelTaskCommand, CompleteTaskCommand, DeferTaskCommand,
     DependencyGraph, LifecycleEvent, OpenTaskCommand, ParentChildGraph, ReadinessProjection,

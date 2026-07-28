@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/provider-abi/v1/rpc.schema.json",
+  "title": "gorce.provider/v1 JSON-RPC 2.0 LF-NDJSON",
+  "description": "Exactly one bounded JSON object per LF-terminated line. Request IDs are ASCII byte-bounded strings, so maxLength is byte-equivalent. Secret, reason, and error message limits are UTF-8 byte limits enforced semantically by Rust/Python; JSON Schema maxLength and the control-character pattern are only expressible prefilters. V1 has one first gorce.initialize request, tool.invoke, operation.cancel, and gorce.shutdown.",
+  "oneOf": [
+    {"$ref": "#/$defs/initialize"},
+    {"$ref": "#/$defs/invoke"},
+    {"$ref": "#/$defs/cancel"},
+    {"$ref": "#/$defs/shutdown"},
+    {"$ref": "#/$defs/response"}
+  ],
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._:-]+$"},
+    "initialize": {
+      "type": "object", "additionalProperties": false, "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {"jsonrpc": {"const": "2.0"}, "id": {"$ref": "#/$defs/id"}, "method": {"const": "gorce.initialize"}, "params": {"$ref": "#/$defs/initializeParams"}}
+    },
+    "initializeParams": {
+      "type": "object", "additionalProperties": false, "required": ["version_range", "limits"],
+      "properties": {
+        "version_range": {"type": "object", "additionalProperties": false, "required": ["minimum", "maximum"], "properties": {"minimum": {"const": "gorce.provider/v1"}, "maximum": {"const": "gorce.provider/v1"}}},
+        "limits": {"type": "object", "additionalProperties": false, "required": ["max_frame_bytes", "max_json_depth", "max_members", "max_timeout_ms"], "properties": {"max_frame_bytes": {"type": "integer", "minimum": 1, "maximum": 65536}, "max_json_depth": {"type": "integer", "minimum": 1, "maximum": 16}, "max_members": {"type": "integer", "minimum": 1, "maximum": 256}, "max_timeout_ms": {"type": "integer", "minimum": 1, "maximum": 120000}}}
+      }
+    },
+    "invocation": {
+      "type": "object", "additionalProperties": false, "required": ["package_digest", "tool_id", "invocation_id", "auth_method_id", "credential_class", "delivery_kind", "deadline_unix_ms"],
+      "properties": {"package_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "tool_id": {"type": "string", "pattern": "^gorce\\.provider/v1/tool/[0-9a-f]{64}/"}, "invocation_id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._:-]+$"}, "auth_method_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9._:-]{1,64}$"}, "credential_class": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9._:-]{1,64}$"}, "delivery_kind": {"type": ["string", "null"], "enum": ["api_key", "access_token", null]}, "deadline_unix_ms": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615}}
+    },
+    "secretDelivery": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "credential_class", "value", "expires_at_unix_ms"],
+      "properties": {"kind": {"enum": ["api_key", "access_token"]}, "credential_class": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._:-]+$"}, "value": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$", "description": "UTF-8 provider secret; the Rust byte bound is 4096 bytes."}, "expires_at_unix_ms": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615}}
+    },
+    "invoke": {
+      "type": "object", "additionalProperties": false, "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": {"const": "2.0"}, "id": {"$ref": "#/$defs/id"}, "method": {"const": "tool.invoke"},
+        "params": {"type": "object", "additionalProperties": false, "required": ["invocation", "input"], "properties": {"invocation": {"$ref": "#/$defs/invocation"}, "input": {"type": "object"}, "secret_delivery": {"anyOf": [{"$ref": "#/$defs/secretDelivery"}, {"type": "null"}]}}}
+      }
+    },
+    "cancel": {
+      "type": "object", "additionalProperties": false, "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {"jsonrpc": {"const": "2.0"}, "id": {"$ref": "#/$defs/id"}, "method": {"const": "operation.cancel"}, "params": {"type": "object", "additionalProperties": false, "required": ["invocation_id"], "properties": {"invocation_id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._:-]+$"}, "reason": {"type": ["string", "null"], "maxLength": 512, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$", "description": "UTF-8 reason; the Rust byte bound is 512 bytes."}}}}
+    },
+    "shutdown": {
+      "type": "object", "additionalProperties": false, "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {"jsonrpc": {"const": "2.0"}, "id": {"$ref": "#/$defs/id"}, "method": {"const": "gorce.shutdown"}, "params": {"type": "object", "additionalProperties": false, "properties": {"reason": {"type": ["string", "null"], "maxLength": 512, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$", "description": "UTF-8 reason; the Rust byte bound is 512 bytes."}}}}
+    },
+    "error": {
+      "type": "object", "additionalProperties": false, "required": ["code", "message"],
+      "properties": {"code": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647}, "message": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$", "description": "UTF-8 error message; the Rust byte bound is 512 bytes."}}
+    },
+    "response": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["jsonrpc", "id", "result"], "properties": {"jsonrpc": {"const": "2.0"}, "id": {"$ref": "#/$defs/id"}, "result": {}}},
+        {"type": "object", "additionalProperties": false, "required": ["jsonrpc", "id", "error"], "properties": {"jsonrpc": {"const": "2.0"}, "id": {"$ref": "#/$defs/id"}, "error": {"$ref": "#/$defs/error"}}}
+      ]
+    }
+  },
+  "examples": [
+    {"jsonrpc":"2.0","id":"host-1","method":"gorce.initialize","params":{"version_range":{"minimum":"gorce.provider/v1","maximum":"gorce.provider/v1"},"limits":{"max_frame_bytes":65536,"max_json_depth":16,"max_members":256,"max_timeout_ms":120000}}},
+    {"jsonrpc":"2.0","id":"host-1-lower","method":"gorce.initialize","params":{"version_range":{"minimum":"gorce.provider/v1","maximum":"gorce.provider/v1"},"limits":{"max_frame_bytes":1024,"max_json_depth":4,"max_members":8,"max_timeout_ms":1000}}},
+    {"jsonrpc":"2.0","id":"host-2","method":"tool.invoke","params":{"invocation":{"package_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","tool_id":"gorce.provider/v1/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/mock-web-search/web_search","invocation_id":"invocation-1","auth_method_id":"search_api_key","credential_class":"search-api-key","delivery_kind":"api_key","deadline_unix_ms":1893456030000},"input":{"query":"gorce"},"secret_delivery":{"kind":"api_key","credential_class":"search-api-key","value":"<provider-process-only-redacted>","expires_at_unix_ms":1893456030000}}},
+    {"jsonrpc":"2.0","id":"host-3","method":"operation.cancel","params":{"invocation_id":"invocation-1","reason":"timeout"}},
+    {"jsonrpc":"2.0","id":"host-4","method":"gorce.shutdown","params":{"reason":null}},
+    {"jsonrpc":"2.0","id":"host-5","result":{"ok":true}},
+    {"jsonrpc":"2.0","id":"host-6","error":{"code":-32602,"message":"invalid params"}}
+  ]
+}

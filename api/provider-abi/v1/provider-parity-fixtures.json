@@ -1,0 +1,57 @@
+{
+  "required_nullable_fields": [
+    "auth_method_id",
+    "credential_class",
+    "delivery_kind"
+  ],
+  "reserved_archive_paths": [
+    "MANIFEST.JSON",
+    "signature.JSON",
+    "Manifest.Json"
+  ],
+  "numeric_bounds": [
+    {"kind": "version", "value": "18446744073709551615.0.1", "valid": true},
+    {"kind": "version", "value": "18446744073709551616.0.1", "valid": false},
+    {"kind": "version", "value": "-1.0.0", "valid": false},
+    {"kind": "version", "value": "+1.0.0", "valid": false},
+    {"kind": "deadline", "value": 18446744073709551615, "valid": true},
+    {"kind": "deadline", "value": 18446744073709551616, "valid": false},
+    {"kind": "expiration", "value": 18446744073709551615, "valid": true},
+    {"kind": "expiration", "value": 18446744073709551616, "valid": false},
+    {"kind": "error_code", "value": -2147483648, "valid": true},
+    {"kind": "error_code", "value": 2147483647, "valid": true},
+    {"kind": "error_code", "value": -2147483649, "valid": false},
+    {"kind": "error_code", "value": 2147483648, "valid": false}
+  ],
+  "oauth_urls": [
+    {"url": "https://example.com/auth", "allow_path": true, "valid": true},
+    {"url": "https://0x7f.example/auth", "allow_path": true, "valid": true},
+    {"url": "https://0x.example/auth", "allow_path": true, "valid": true},
+    {"url": "https://127.0.0.1/auth", "allow_path": true, "valid": true},
+    {"url": "https://0x7f/auth", "allow_path": true, "valid": false},
+    {"url": "https://0x/auth", "allow_path": true, "valid": false},
+    {"url": "https://0X/auth", "allow_path": true, "valid": false},
+    {"url": "https://0x7f.1/auth", "allow_path": true, "valid": false},
+    {"url": "https://0x.0/auth", "allow_path": true, "valid": false},
+    {"url": "https://0x.0x/auth", "allow_path": true, "valid": false},
+    {"url": "https://0177/auth", "allow_path": true, "valid": false},
+    {"url": "https://127.0x0.0.1/auth", "allow_path": true, "valid": false},
+    {"url": "https://127.1/auth", "allow_path": true, "valid": false},
+    {"url": "https://127.0.0/auth", "allow_path": true, "valid": false},
+    {"url": "https://127.0.0.01/auth", "allow_path": true, "valid": false},
+    {"url": "https://[::1]/auth", "allow_path": true, "valid": true},
+    {"url": "https://[::ffff:192.0.2.1]/auth", "allow_path": true, "valid": false},
+    {"url": "https://[:::1]/auth", "allow_path": true, "valid": false},
+    {"url": "https://[ABCD::1]/auth", "allow_path": true, "valid": false},
+    {"url": "https://999.999.999.999/auth", "allow_path": true, "valid": false},
+    {"url": "https://01.2.3.4/auth", "allow_path": true, "valid": false},
+    {"url": "https://[gg::1]/auth", "allow_path": true, "valid": false},
+    {"url": "https://example.com%2ecom/auth", "allow_path": true, "valid": false},
+    {"url": "https://example.com\\evil.com/auth", "allow_path": true, "valid": false},
+    {"url": "https://example.com:0/auth", "allow_path": true, "valid": false},
+    {"url": "https://example.com:080/auth", "allow_path": true, "valid": false},
+    {"url": "https://example.com:80/auth", "allow_path": true, "valid": true},
+    {"url": "https://example.com", "allow_path": false, "valid": true},
+    {"url": "https://example.com/path", "allow_path": false, "valid": false}
+  ]
+}

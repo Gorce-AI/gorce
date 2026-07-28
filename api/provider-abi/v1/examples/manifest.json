@@ -1,0 +1,11 @@
+{
+  "format": "gorce.provider/v1",
+  "provider_id": "mock-web-search",
+  "display_name": "Deterministic Mock Web Search",
+  "version": "1.0.0",
+  "publisher": {"name": "Fixture", "fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+  "package": {"files": [{"path": "bin/mock-web-search", "size": 29, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}], "executable": {"path": "bin/mock-web-search", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+  "auth_methods": [{"kind": "api_key", "id": "search_api_key", "credential_class": "search-api-key", "label": "Search API key"}],
+  "capabilities": {"auth_method_ids": ["search_api_key"], "credential_classes": ["search-api-key"], "network_origins": []},
+  "tools": [{"name": "web_search", "description": "Search", "input_schema": {"type": "object", "additionalProperties": false}, "output_schema": {"type": "object", "additionalProperties": false}, "side_effects": ["network_read"], "auth_method_id": "search_api_key", "credential_class": "search-api-key", "network_origins": []}]
+}

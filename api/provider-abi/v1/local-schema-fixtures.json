@@ -1,0 +1,77 @@
+{
+  "positive": [
+    {
+      "name": "boolean additionalProperties",
+      "schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"], "additionalProperties": true}
+    },
+    {
+      "name": "character-count string bounds",
+      "schema": {"type": "string", "minLength": 2, "maxLength": 2}
+    },
+    {
+      "name": "finite numeric bounds",
+      "schema": {"type": "number", "minimum": -1.5, "maximum": 2}
+    },
+    {
+      "name": "bounded enum",
+      "schema": {"type": "string", "enum": ["one", "two"]}
+    }
+  ],
+  "numeric_cases": [
+    {
+      "name": "const numeric equality",
+      "schema": {"type": "number", "const": 1},
+      "value": 1.0,
+      "valid": true
+    },
+    {
+      "name": "enum numeric equality",
+      "schema": {"type": "number", "enum": [1]},
+      "value": 1.0,
+      "valid": true
+    },
+    {
+      "name": "numeric enum duplicate",
+      "schema": {"type": "number", "enum": [1, 1.0]},
+      "valid": false
+    },
+    {
+      "name": "numeric minimum equality",
+      "schema": {"type": "number", "minimum": 1},
+      "value": 1.0,
+      "valid": true
+    },
+    {
+      "name": "integer numeric equality",
+      "schema": {"type": "integer"},
+      "value": 1.0,
+      "valid": true
+    },
+    {
+      "name": "decimal integer keyword",
+      "schema": {"type": "string", "minLength": 1.0},
+      "value": "x",
+      "valid": true
+    },
+    {
+      "name": "fractional integer keyword",
+      "schema": {"type": "string", "minLength": 1.5},
+      "valid": false
+    }
+  ],
+  "negative": [
+    {"name": "additionalProperties must be boolean", "schema": {"type": "object", "additionalProperties": "false"}},
+    {"name": "metadata rejects U+0085", "schema": {"type": "string", "title": "\u0085"}},
+    {"name": "property names reject U+0085", "schema": {"type": "object", "properties": {"\u0085": {"type": "string"}}}},
+    {"name": "duplicate required names", "schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query", "query"]}},
+    {"name": "unknown required name", "schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["missing"]}},
+    {"name": "enum must be non-empty", "schema": {"type": "string", "enum": []}},
+    {"name": "enum values must be unique", "schema": {"type": "string", "enum": ["same", "same"]}},
+    {"name": "integer keyword rejects boolean", "schema": {"type": "string", "minLength": true}},
+    {"name": "integer keyword rejects inverted bounds", "schema": {"type": "string", "minLength": 3, "maxLength": 2}},
+    {"name": "decimal string bounds reject inversion", "schema": {"type": "string", "minLength": 2.0, "maxLength": 1.0}},
+    {"name": "decimal array bounds reject inversion", "schema": {"type": "array", "minItems": 2.0, "maxItems": 1.0}},
+    {"name": "numeric keyword rejects string", "schema": {"type": "number", "minimum": "zero"}},
+    {"name": "numeric keyword rejects inverted bounds", "schema": {"type": "number", "minimum": 3, "maximum": 2}}
+  ]
+}

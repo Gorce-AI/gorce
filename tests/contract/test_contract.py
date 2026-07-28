@@ -1,8 +1,12 @@
 import json
+import ipaddress
+import math
+import os
 import re
 import shutil
 import subprocess
 import unittest
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -11,15 +15,25 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_DIR = ROOT / "api" / "schemas"
 EXAMPLE_DIR = ROOT / "api" / "examples"
+PROVIDER_SCHEMA_DIR = ROOT / "api" / "provider-abi" / "v1"
 NEGATIVE_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 MAX_EVENT_COUNT = 1024
 MAX_EVENT_DATA_BYTES = 1_048_576
 MAX_TOTAL_EVENT_DATA_BYTES = 8 * 1_048_576
 MAX_REFERENCED_BLOBS = 1024
+MAX_U64 = 2**64 - 1
+MIN_I32 = -(2**31)
+MAX_I32 = 2**31 - 1
 SCHEMAS_BY_ID = {
     json.loads(path.read_text())["$id"]: json.loads(path.read_text())
     for path in SCHEMA_DIR.glob("*.schema.json")
 }
+SCHEMAS_BY_ID.update(
+    {
+        json.loads(path.read_text())["$id"]: json.loads(path.read_text())
+        for path in PROVIDER_SCHEMA_DIR.glob("*.schema.json")
+    }
+)
 
 
 class SchemaViolation(AssertionError):
@@ -30,7 +44,15 @@ def validate(value, schema, path="$", root=None):
     if root is None:
         root = schema
     if "$ref" in schema:
-        target = SCHEMAS_BY_ID.get(schema["$ref"])
+        reference = schema["$ref"]
+        if reference.startswith("#/"):
+            target = root
+            for part in reference[2:].split("/"):
+                target = target.get(part)
+                if target is None:
+                    break
+        else:
+            target = SCHEMAS_BY_ID.get(reference)
         if target is None:
             raise SchemaViolation(f"{path}: unresolved schema reference {schema['$ref']}")
         validate(value, target, path, root)
@@ -42,9 +64,9 @@ def validate(value, schema, path="$", root=None):
         if not any(_is_type(value, item) for item in expected_types):
             raise SchemaViolation(f"{path}: expected {expected}, got {type(value).__name__}")
 
-    if "enum" in schema and value not in schema["enum"]:
+    if "enum" in schema and not any(_json_equal(value, candidate) for candidate in schema["enum"]):
         raise SchemaViolation(f"{path}: {value!r} is not in enum")
-    if "const" in schema and value != schema["const"]:
+    if "const" in schema and not _json_equal(value, schema["const"]):
         raise SchemaViolation(f"{path}: {value!r} is not {schema['const']!r}")
 
     if isinstance(value, str):
@@ -63,6 +85,11 @@ def validate(value, schema, path="$", root=None):
             raise SchemaViolation(f"{path}: number is above maximum")
 
     if isinstance(value, dict):
+        if "maxProperties" in schema and len(value) > schema["maxProperties"]:
+            raise SchemaViolation(f"{path}: too many properties")
+        if "propertyNames" in schema:
+            for name in value:
+                validate(name, schema["propertyNames"], f"{path}.{name}", root)
         for name in schema.get("required", []):
             if name not in value:
                 raise SchemaViolation(f"{path}: missing {name}")
@@ -79,6 +106,13 @@ def validate(value, schema, path="$", root=None):
             raise SchemaViolation(f"{path}: too few items")
         if "maxItems" in schema and len(value) > schema["maxItems"]:
             raise SchemaViolation(f"{path}: too many items")
+        if schema.get("uniqueItems"):
+            if any(
+                _json_equal(item, other)
+                for index, item in enumerate(value)
+                for other in value[index + 1 :]
+            ):
+                raise SchemaViolation(f"{path}: items are not unique")
         if "items" in schema:
             for index, item in enumerate(value):
                 validate(item, schema["items"], f"{path}[{index}]", root)
@@ -116,7 +150,7 @@ def _is_type(value, expected):
         "object": isinstance(value, dict),
         "array": isinstance(value, list),
         "string": isinstance(value, str),
-        "integer": isinstance(value, int) and not isinstance(value, bool),
+        "integer": _json_schema_integer(value) is not None,
         "number": isinstance(value, (int, float)) and not isinstance(value, bool),
         "boolean": isinstance(value, bool),
         "null": value is None,
@@ -176,6 +210,443 @@ def validate_event_batch_contract(value):
         if digest in digests:
             raise SchemaViolation(f"$.referenced_blobs[{index}]: duplicate digest")
         digests.add(digest)
+
+
+def validate_provider_manifest_contract(value):
+    version = value["version"].split(".")
+    try:
+        version_values = [int(component) for component in version]
+    except ValueError as error:
+        raise SchemaViolation("provider version is not numeric") from error
+    if len(version) != 3 or any(
+        not component
+        or not component.isascii()
+        or not component.isdecimal()
+        or component_value < 0
+        or component_value > MAX_U64
+        for component, component_value in zip(version, version_values)
+    ):
+        raise SchemaViolation("provider version components exceed u64")
+    files = value["package"]["files"]
+    executable = value["package"]["executable"]
+    paths = {entry["path"].lower() for entry in files}
+    if len(paths) != len(files):
+        raise SchemaViolation("provider package file paths must be unique")
+    if sum(entry["size"] for entry in files) > 4 * 64 * 1024 * 1024:
+        raise SchemaViolation("provider package payload exceeds the bounded total")
+    for entry in files:
+        path = entry["path"]
+        parts = path.split("/")
+        if path.lower() in {"manifest.json", "signature.json"}:
+            raise SchemaViolation("provider package metadata paths are archive-reserved")
+        if (
+            path.startswith("/")
+            or not path.isascii()
+            or any(not ("!" <= char <= "~") for char in path)
+            or "\\" in path
+            or any(char in path for char in ':<>"|?*')
+            or "" in parts
+            or any(part in {".", ".."} for part in parts)
+            or any(part.endswith(".") or provider_windows_reserved_component(part) for part in parts)
+        ):
+            raise SchemaViolation("provider package paths must be safe relative paths")
+    if executable["path"].lower() not in paths:
+        raise SchemaViolation("provider executable must be in the file table")
+    executable_file = next((entry for entry in files if entry["path"] == executable["path"]), None)
+    if executable_file is None:
+        raise SchemaViolation("provider executable path case must match its file entry")
+    if executable_file["sha256"] != executable["sha256"]:
+        raise SchemaViolation("provider executable hash must match its file entry")
+    auth_ids = {method["id"] for method in value["auth_methods"]}
+    if len(auth_ids) != len(value["auth_methods"]):
+        raise SchemaViolation("provider auth method IDs must be unique")
+    credential_classes = [method["credential_class"] for method in value["auth_methods"]]
+    if len(set(credential_classes)) != len(credential_classes):
+        raise SchemaViolation("provider credential classes must map one-to-one to auth methods")
+    if auth_ids != set(value["capabilities"]["auth_method_ids"]):
+        raise SchemaViolation("provider auth capability set must equal declarations")
+    if set(credential_classes) != set(value["capabilities"]["credential_classes"]):
+        raise SchemaViolation("provider credential capability set must equal declarations")
+    auth_by_id = {method["id"]: method for method in value["auth_methods"]}
+    for method in value["auth_methods"]:
+        if method["kind"] == "oauth_authorization_code_pkce":
+            for endpoint in (method["authorization_endpoint"], method["token_endpoint"]):
+                validate_provider_https_url(endpoint, allow_path=True)
+            for origin in method["approved_origins"]:
+                validate_provider_https_url(origin, allow_path=False)
+            approved = set(method["approved_origins"])
+            for endpoint in (method["authorization_endpoint"], method["token_endpoint"]):
+                parsed = urlparse(endpoint)
+                host = parsed.hostname or ""
+                if ":" in host:
+                    host = f"[{host}]"
+                origin = f"https://{host}"
+                if parsed.port is not None:
+                    origin += f":{parsed.port}"
+                if origin not in approved:
+                    raise SchemaViolation("provider OAuth endpoint origin is not approved")
+    for origin in value["capabilities"]["network_origins"]:
+        validate_provider_https_url(origin, allow_path=False)
+    for tool in value["tools"]:
+        if sum(existing["name"] == tool["name"] for existing in value["tools"]) != 1:
+            raise SchemaViolation("provider tool names must be unique")
+        if tool["credential_class"] is None:
+            if tool["auth_method_id"] is not None:
+                raise SchemaViolation("credential-free provider tools cannot bind auth")
+        else:
+            if tool["auth_method_id"] is None or tool["auth_method_id"] not in auth_by_id:
+                raise SchemaViolation("provider tool auth method is not declared")
+            if auth_by_id[tool["auth_method_id"]]["credential_class"] != tool["credential_class"]:
+                raise SchemaViolation("provider tool auth/class binding does not match")
+            if tool["credential_class"] not in set(value["capabilities"]["credential_classes"]):
+                raise SchemaViolation("provider tool credential class is not approved")
+        if len(tool["side_effects"]) != len(set(tool["side_effects"])):
+            raise SchemaViolation("provider tool side effects must be unique")
+        validate_provider_local_schema(tool["input_schema"])
+        if tool["input_schema"].get("type") != "object":
+            raise SchemaViolation("provider input schemas must describe JSON objects")
+        validate_provider_local_schema(tool["output_schema"])
+        if not set(tool["network_origins"]).issubset(set(value["capabilities"]["network_origins"])):
+            raise SchemaViolation("provider tool origin is not approved")
+
+
+def validate_provider_local_schema(schema, depth=0, nodes=None):
+    if nodes is None:
+        nodes = [0]
+    if depth == 0:
+        try:
+            encoded = json.dumps(
+                schema, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+            ).encode("utf-8")
+        except (TypeError, ValueError) as error:
+            raise SchemaViolation("provider local schemas must be JSON") from error
+        if len(encoded) > 32 * 1024:
+            raise SchemaViolation("provider local schema exceeds its byte bound")
+    nodes[0] += 1
+    if depth > 16 or nodes[0] > 256 or not isinstance(schema, dict):
+        raise SchemaViolation("provider local schemas must be bounded objects")
+    allowed = {
+        "type", "title", "description", "properties", "required", "items", "additionalProperties",
+        "enum", "const", "minLength", "maxLength", "minimum", "maximum", "minItems", "maxItems",
+    }
+    if set(schema) - allowed:
+        raise SchemaViolation("provider local schema contains an unsupported keyword")
+    if "type" in schema and (
+        not isinstance(schema["type"], str)
+        or schema["type"] not in {
+            "object", "array", "string", "integer", "number", "boolean", "null"
+        }
+    ):
+        raise SchemaViolation("provider local schema contains an unknown type")
+    for name in ("title", "description"):
+        if name in schema:
+            text = schema[name]
+            if (
+                not isinstance(text, str)
+                or not text
+                or len(text) > 4096
+                or any(unicodedata.category(char) == "Cc" for char in text)
+            ):
+                raise SchemaViolation("provider local schema text metadata is invalid")
+    properties = schema.get("properties", {})
+    if not isinstance(properties, dict) or len(properties) > 64:
+        raise SchemaViolation("provider local schema properties are bounded objects")
+    for name in properties:
+        if (
+            not name
+            or len(name.encode("utf-8")) > 128
+            or any(unicodedata.category(char) == "Cc" for char in name)
+        ):
+            raise SchemaViolation("provider local schema property names are invalid")
+    required = schema.get("required", [])
+    if not isinstance(required, list) or len(required) > 64:
+        raise SchemaViolation("provider local schema required names are invalid")
+    if any(
+        not isinstance(name, str) or not name or name not in properties for name in required
+    ) or len(set(required)) != len(required):
+        raise SchemaViolation("provider local schema required names are invalid")
+    if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
+        raise SchemaViolation("provider local schema additionalProperties must be boolean")
+    if "enum" in schema:
+        values = schema["enum"]
+        if (
+            not isinstance(values, list)
+            or not values
+            or len(values) > 32
+            or any(_json_equal(value, other) for index, value in enumerate(values) for other in values[index + 1 :])
+        ):
+            raise SchemaViolation("provider local schema enum is invalid")
+    integer_bounds = {}
+    for keyword, maximum in (
+        ("minLength", 4096),
+        ("maxLength", 4096),
+        ("minItems", 256),
+        ("maxItems", 256),
+    ):
+        integer_value = _json_schema_integer(schema[keyword]) if keyword in schema else None
+        if keyword in schema and (
+            integer_value is None or not 0 <= integer_value <= maximum
+        ):
+            raise SchemaViolation(f"provider local schema {keyword} is invalid")
+        if keyword in schema:
+            integer_bounds[keyword] = integer_value
+    for keyword in ("minimum", "maximum"):
+        if keyword in schema and not _is_finite_json_number(schema[keyword]):
+            raise SchemaViolation(f"provider local schema {keyword} is invalid")
+    if (
+        "minLength" in integer_bounds
+        and "maxLength" in integer_bounds
+        and integer_bounds["minLength"] > integer_bounds["maxLength"]
+    ) or (
+        "minItems" in integer_bounds
+        and "maxItems" in integer_bounds
+        and integer_bounds["minItems"] > integer_bounds["maxItems"]
+    ) or (
+        "minimum" in schema
+        and "maximum" in schema
+        and schema["minimum"] > schema["maximum"]
+    ):
+        raise SchemaViolation("provider local schema has inverted bounds")
+    for child in properties.values():
+        validate_provider_local_schema(child, depth + 1, nodes)
+    if "items" in schema:
+        validate_provider_local_schema(schema["items"], depth + 1, nodes)
+
+
+def _is_finite_json_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return isinstance(value, int) or math.isfinite(value)
+
+
+def _json_schema_integer(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        return int(value)
+    return value
+
+
+def _json_equal(left, right):
+    if isinstance(left, bool) != isinstance(right, bool):
+        return False
+    if isinstance(left, (int, float)) and not isinstance(left, bool):
+        return (
+            isinstance(right, (int, float))
+            and not isinstance(right, bool)
+            and left == right
+        )
+    if isinstance(left, dict) or isinstance(right, dict):
+        return (
+            isinstance(left, dict)
+            and isinstance(right, dict)
+            and left.keys() == right.keys()
+            and all(_json_equal(left[key], right[key]) for key in left)
+        )
+    if isinstance(left, list) or isinstance(right, list):
+        return (
+            isinstance(left, list)
+            and isinstance(right, list)
+            and len(left) == len(right)
+            and all(_json_equal(item, other) for item, other in zip(left, right))
+        )
+    return type(left) is type(right) and left == right
+
+
+def validate_provider_https_url(value, allow_path):
+    parsed = urlparse(value)
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise SchemaViolation("provider URL has an invalid port") from error
+    host = parsed.hostname or ""
+    authority = value.removeprefix("https://").split("/", 1)[0]
+    if "%" in authority or "\\" in authority:
+        raise SchemaViolation("provider URL authority must not contain encoded or backslash-normalized text")
+    raw_host = (
+        authority[1:].split("]", 1)[0]
+        if authority.startswith("[")
+        else authority.split(":", 1)[0]
+    )
+    explicit_port = None
+    if authority.startswith("["):
+        closing = authority.find("]")
+        if closing >= 0 and authority[closing + 1 :].startswith(":"):
+            explicit_port = authority[closing + 2 :]
+    elif authority.count(":") == 1:
+        explicit_port = authority.rsplit(":", 1)[1]
+    if explicit_port is not None and (
+        not explicit_port
+        or not explicit_port.isascii()
+        or not explicit_port.isdecimal()
+        or (len(explicit_port) > 1 and explicit_port.startswith("0"))
+        or explicit_port == "0"
+        or int(explicit_port) > 65535
+    ):
+        raise SchemaViolation("provider URL port must be a canonical non-zero decimal number")
+    if (
+        not value.isascii()
+        or parsed.scheme != "https"
+        or not host
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or raw_host != raw_host.lower()
+        or port == 443
+        or (not allow_path and parsed.path not in ("", "/"))
+        or any(char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~!$&'()*+,;=:@%/-" for char in parsed.path)
+    ):
+        raise SchemaViolation("provider URL is not canonical HTTPS syntax")
+    if ":" in host:
+        if not parsed.netloc.startswith("["):
+            raise SchemaViolation("provider URL has a non-canonical IPv6 host")
+        if "." in host:
+            raise SchemaViolation("provider URL IPv6 host must use hexadecimal notation")
+        try:
+            ipaddress.IPv6Address(host)
+        except ValueError as error:
+            raise SchemaViolation("provider URL has an invalid IPv6 host") from error
+    elif _is_whatwg_numeric_host(host):
+        if not _is_canonical_ipv4_host(host):
+            raise SchemaViolation("provider URL has an invalid IPv4 host")
+    elif any(
+        not label
+        or label.startswith("-")
+        or label.endswith("-")
+        or not all(char.isascii() and (char.islower() or char.isdigit() or char == "-") for char in label)
+        for label in host.split(".")
+    ):
+        raise SchemaViolation("provider URL has an invalid DNS host")
+
+
+def _is_whatwg_numeric_component(component):
+    if component.startswith("0x"):
+        return all(char in "0123456789abcdef" for char in component[2:])
+    return bool(component) and component.isdigit()
+
+
+def _is_whatwg_numeric_host(host):
+    return bool(host) and all(
+        _is_whatwg_numeric_component(component) for component in host.split(".")
+    )
+
+
+def _is_canonical_ipv4_host(host):
+    components = host.split(".")
+    return len(components) == 4 and all(
+        component
+        and (len(component) == 1 or not component.startswith("0"))
+        and component.isdigit()
+        and 0 <= int(component) <= 255
+        for component in components
+    )
+
+
+def provider_windows_reserved_component(component):
+    stem = component.split(".", 1)[0].lower()
+    return stem in {"con", "conin$", "conout$", "prn", "aux", "nul", "clock$"} or (
+        len(stem) == 4 and stem[:3] in {"com", "lpt"} and stem[3] in "123456789"
+    )
+
+
+def validate_provider_rpc_contract(value):
+    if not isinstance(value.get("id"), str) or not 1 <= len(value["id"]) <= 64:
+        raise SchemaViolation("provider RPC IDs must be bounded strings")
+    if "method" in value:
+        if value["method"] == "gorce.initialize":
+            limits = value["params"]["limits"]
+            maximums = {
+                "max_frame_bytes": 65536,
+                "max_json_depth": 16,
+                "max_members": 256,
+                "max_timeout_ms": 120000,
+            }
+            if any(
+                name not in limits or not 1 <= limits[name] <= maximum
+                for name, maximum in maximums.items()
+            ):
+                raise SchemaViolation("provider initialize limits are outside ABI bounds")
+        if value["method"] == "tool.invoke":
+            invocation = value["params"]["invocation"]
+            if (
+                isinstance(invocation["deadline_unix_ms"], bool)
+                or not isinstance(invocation["deadline_unix_ms"], int)
+                or not (
+                1 <= invocation["deadline_unix_ms"] <= MAX_U64
+                )
+            ):
+                raise SchemaViolation("provider invocation deadline exceeds u64")
+            if not invocation["tool_id"].startswith(
+                "gorce.provider/v1/tool/" + invocation["package_digest"] + "/"
+            ):
+                raise SchemaViolation("provider tool identity is not digest-bound")
+            fields = (
+                invocation["auth_method_id"],
+                invocation["credential_class"],
+                invocation["delivery_kind"],
+            )
+            if any(field is not None for field in fields) and not all(field is not None for field in fields):
+                raise SchemaViolation("provider invocation credentials must be all present or absent")
+            delivery = value["params"].get("secret_delivery")
+            if any(field is not None for field in fields):
+                if not isinstance(delivery, dict):
+                    raise SchemaViolation("credentialed invocation requires delivery")
+                if delivery["credential_class"] != invocation["credential_class"]:
+                    raise SchemaViolation("provider delivery class is not invocation-bound")
+                if delivery["kind"] != invocation["delivery_kind"]:
+                    raise SchemaViolation("provider delivery kind is not invocation-bound")
+                if delivery["expires_at_unix_ms"] > invocation["deadline_unix_ms"]:
+                    raise SchemaViolation("provider delivery exceeds invocation deadline")
+                if (
+                    isinstance(delivery["expires_at_unix_ms"], bool)
+                    or not isinstance(delivery["expires_at_unix_ms"], int)
+                    or not (
+                    1 <= delivery["expires_at_unix_ms"] <= MAX_U64
+                    )
+                ):
+                    raise SchemaViolation("provider delivery expiry exceeds u64")
+                validate_provider_byte_string(delivery["value"], 4096, "secret delivery")
+            elif delivery is not None:
+                raise SchemaViolation("credential-free invocation cannot deliver a secret")
+        for reason in (value.get("params", {}).get("reason"),) if value["method"] == "operation.cancel" else ():
+            if reason is not None:
+                validate_provider_byte_string(reason, 512, "cancel reason")
+        if value["method"] == "gorce.shutdown":
+            reason = value["params"].get("reason")
+            if reason is not None:
+                validate_provider_byte_string(reason, 512, "shutdown reason")
+    else:
+        if ("result" in value) == ("error" in value):
+            raise SchemaViolation("provider responses require exactly one result or error")
+        if "error" in value:
+            error = value["error"]
+            if (
+                isinstance(error.get("code"), bool)
+                or not isinstance(error.get("code"), int)
+                or not (
+                MIN_I32 <= error["code"] <= MAX_I32
+                )
+            ):
+                raise SchemaViolation("provider error code exceeds i32")
+            if not isinstance(error.get("message"), str) or not 1 <= len(error["message"]) <= 512:
+                raise SchemaViolation("provider error messages are bounded")
+            validate_provider_byte_string(error["message"], 512, "error message")
+
+
+def validate_provider_byte_string(value, maximum, label):
+    if (
+        len(value.encode("utf-8")) > maximum
+        or any(unicodedata.category(char) == "Cc" for char in value)
+    ):
+        raise SchemaViolation(f"{label} exceeds its UTF-8 byte bound or contains control text")
+
+
+def validate_provider_signed_package_contract(value):
+    if len(value["manifest"].encode("utf-8")) > 256 * 1024:
+        raise SchemaViolation("signed package manifest exceeds its UTF-8 byte bound")
 
 
 class ContractTest(unittest.TestCase):
@@ -294,9 +765,17 @@ class ContractTest(unittest.TestCase):
         for path in fixtures:
             with self.subTest(fixture=path.name):
                 value = json.loads(path.read_text())
-                with self.assertRaises(SchemaViolation):
+                schema_failed = False
+                try:
                     validate(value, schema)
+                except SchemaViolation:
+                    schema_failed = True
+                semantic_failed = False
+                try:
                     validate_event_batch_contract(value)
+                except SchemaViolation:
+                    semantic_failed = True
+                self.assertTrue(schema_failed or semantic_failed)
 
     def test_canonical_and_public_event_formats_are_not_interchangeable(self):
         canonical = json.loads((EXAMPLE_DIR / "event-batch.json").read_text())
@@ -440,6 +919,330 @@ class ContractTest(unittest.TestCase):
         self.assertNotIn("requestBodies:", document)
         self.assertNotIn("/v0/projects/{project_id}/tasks:", document)
         self.assertIn("x-daemon-only: true", document)
+
+    def test_provider_abi_schemas_and_examples_are_loaded_and_cross_checked(self):
+        schemas = sorted(PROVIDER_SCHEMA_DIR.glob("*.schema.json"))
+        self.assertGreaterEqual(len(schemas), 4)
+        for path in schemas:
+            schema = json.loads(path.read_text())
+            self.assertEqual(schema["$schema"], "https://json-schema.org/draft/2020-12/schema")
+            self.assertIn("$id", schema)
+            for example in schema.get("examples", []):
+                with self.subTest(schema=path.name):
+                    validate(example, schema)
+                    if path.name == "manifest.schema.json":
+                        validate_provider_manifest_contract(example)
+                    if path.name == "rpc.schema.json":
+                        validate_provider_rpc_contract(example)
+                    if path.name == "signed-package.schema.json":
+                        validate_provider_signed_package_contract(example)
+
+    def test_shared_provider_fixtures_pass_schema_and_semantic_contracts(self):
+        fixtures = json.loads(
+            (PROVIDER_SCHEMA_DIR / "provider-abi-fixtures.json").read_text()
+        )
+        rpc_schema = json.loads((PROVIDER_SCHEMA_DIR / "rpc.schema.json").read_text())
+        manifest_schema = json.loads((PROVIDER_SCHEMA_DIR / "manifest.schema.json").read_text())
+        schemas = {"manifest": manifest_schema, "response": rpc_schema}
+        for fixture in fixtures["positive"]:
+            with self.subTest(kind=fixture["kind"], polarity="positive"):
+                validate(fixture["value"], schemas[fixture["kind"]])
+                if fixture["kind"] == "manifest":
+                    validate_provider_manifest_contract(fixture["value"])
+                else:
+                    validate_provider_rpc_contract(fixture["value"])
+        for fixture in fixtures["negative"]:
+            with self.subTest(reason=fixture["reason"], polarity="negative"):
+                schema_failed = False
+                try:
+                    validate(fixture["value"], schemas[fixture["kind"]])
+                except SchemaViolation:
+                    schema_failed = True
+                semantic_failed = False
+                try:
+                    if fixture["kind"] == "manifest":
+                        validate_provider_manifest_contract(fixture["value"])
+                    else:
+                        validate_provider_rpc_contract(fixture["value"])
+                except SchemaViolation:
+                    semantic_failed = True
+                self.assertTrue(schema_failed or semantic_failed)
+
+    def test_provider_paths_oauth_urls_input_type_and_character_limits_match_rust(self):
+        schema = json.loads((PROVIDER_SCHEMA_DIR / "manifest.schema.json").read_text())
+        base = json.loads((PROVIDER_SCHEMA_DIR / "examples" / "manifest.json").read_text())
+        for unsafe in (
+            "C:provider", "C:/provider", "//server/share/provider", "provider:stream", "provider?name",
+            "CON", "CONIN$", "CONOUT$.txt", "nul.txt", "clock$", "dir/name.", "dir/name ", "dir/name*",
+        ):
+            value = json.loads(json.dumps(base))
+            value["package"]["files"][0]["path"] = unsafe
+            value["package"]["executable"]["path"] = unsafe
+            with self.subTest(path=unsafe), self.assertRaises(SchemaViolation):
+                validate(value, schema)
+
+        invalid_input = json.loads(json.dumps(base))
+        invalid_input["tools"][0]["input_schema"] = {"type": "array"}
+        with self.assertRaises(SchemaViolation):
+            validate(invalid_input, schema)
+
+        oauth = json.loads(json.dumps(base))
+        oauth["auth_methods"] = [{
+            "kind": "oauth_authorization_code_pkce", "id": "search_oauth", "credential_class": "search-oauth",
+            "label": "Search OAuth", "client_type": "public", "client_id": "public-client",
+            "authorization_endpoint": "https://example.com:8443/authorize", "token_endpoint": "https://example.com:8443/token",
+            "approved_origins": ["https://example.com:8443"], "scopes": ["search.read"],
+            "callback": "host_managed", "grant_type": "authorization_code", "pkce_method": "S256",
+        }]
+        oauth["capabilities"] = {"auth_method_ids": ["search_oauth"], "credential_classes": ["search-oauth"], "network_origins": []}
+        oauth["tools"][0]["auth_method_id"] = "search_oauth"
+        oauth["tools"][0]["credential_class"] = "search-oauth"
+        validate(oauth, schema)
+        validate_provider_manifest_contract(oauth)
+        invalid_oauth = json.loads(json.dumps(oauth))
+        invalid_oauth["auth_methods"][0]["authorization_endpoint"] = "https://EXAMPLE.com/authorize"
+        with self.assertRaises(SchemaViolation):
+            validate(invalid_oauth, schema)
+
+        parity = json.loads((PROVIDER_SCHEMA_DIR / "provider-parity-fixtures.json").read_text())
+        for reserved in parity["reserved_archive_paths"]:
+            value = json.loads(json.dumps(base))
+            value["package"]["files"][0]["path"] = reserved
+            value["package"]["executable"]["path"] = reserved
+            with self.subTest(path=reserved):
+                with self.assertRaises(SchemaViolation):
+                    validate(value, schema)
+                with self.assertRaises(SchemaViolation):
+                    validate_provider_manifest_contract(value)
+
+        for fixture in parity["oauth_urls"]:
+            schema_name = "httpsUrl" if fixture["allow_path"] else "httpsOrigin"
+            schema_valid = True
+            try:
+                validate(fixture["url"], schema["$defs"][schema_name])
+            except SchemaViolation:
+                schema_valid = False
+            semantic_valid = True
+            try:
+                validate_provider_https_url(fixture["url"], fixture["allow_path"])
+            except SchemaViolation:
+                semantic_valid = False
+            with self.subTest(url=fixture["url"]):
+                self.assertEqual(schema_valid, fixture["valid"])
+                self.assertEqual(semantic_valid, fixture["valid"])
+
+        unicode_name = json.loads(json.dumps(base))
+        unicode_name["display_name"] = "é" * 512
+        validate(unicode_name, schema)
+        unicode_name["display_name"] += "é"
+        with self.assertRaises(SchemaViolation):
+            validate(unicode_name, schema)
+        unicode_name["display_name"] = "\u0085"
+        with self.assertRaises(SchemaViolation):
+            validate(unicode_name, schema)
+
+    def test_provider_required_nullable_fields_must_be_present_or_explicitly_null(self):
+        parity = json.loads((PROVIDER_SCHEMA_DIR / "provider-parity-fixtures.json").read_text())
+        manifest_schema = json.loads((PROVIDER_SCHEMA_DIR / "manifest.schema.json").read_text())
+        manifest = json.loads((PROVIDER_SCHEMA_DIR / "examples" / "manifest.json").read_text())
+        for field in parity["required_nullable_fields"][:2]:
+            missing = json.loads(json.dumps(manifest))
+            missing["tools"][0].pop(field)
+            with self.assertRaises(SchemaViolation):
+                validate(missing, manifest_schema)
+
+        explicit_null = json.loads(json.dumps(manifest))
+        explicit_null["tools"][0]["auth_method_id"] = None
+        explicit_null["tools"][0]["credential_class"] = None
+        validate(explicit_null, manifest_schema)
+        validate_provider_manifest_contract(explicit_null)
+
+        rpc_schema = json.loads((PROVIDER_SCHEMA_DIR / "rpc.schema.json").read_text())
+        invoke = json.loads((PROVIDER_SCHEMA_DIR / "examples" / "tool-invoke.json").read_text())
+        for field in parity["required_nullable_fields"]:
+            missing = json.loads(json.dumps(invoke))
+            missing["params"]["invocation"].pop(field)
+            with self.assertRaises(SchemaViolation):
+                validate(missing, rpc_schema)
+
+        explicit_null = json.loads(json.dumps(invoke))
+        explicit_null["params"]["invocation"]["auth_method_id"] = None
+        explicit_null["params"]["invocation"]["credential_class"] = None
+        explicit_null["params"]["invocation"]["delivery_kind"] = None
+        explicit_null["params"].pop("secret_delivery")
+        validate(explicit_null, rpc_schema)
+        validate_provider_rpc_contract(explicit_null)
+
+        initialize_schema = json.loads(
+            (PROVIDER_SCHEMA_DIR / "initialize-result.schema.json").read_text()
+        )
+        initialize = json.loads(json.dumps(initialize_schema["examples"][0]))
+        for field in parity["required_nullable_fields"][:2]:
+            missing = json.loads(json.dumps(initialize))
+            missing["tools"][0].pop(field)
+            with self.assertRaises(SchemaViolation):
+                validate(missing, initialize_schema)
+        initialize["tools"][0]["auth_method_id"] = None
+        initialize["tools"][0]["credential_class"] = None
+        validate(initialize, initialize_schema)
+
+    def test_provider_numeric_bounds_match_rust_and_schema(self):
+        parity = json.loads((PROVIDER_SCHEMA_DIR / "provider-parity-fixtures.json").read_text())
+        manifest_schema = json.loads((PROVIDER_SCHEMA_DIR / "manifest.schema.json").read_text())
+        manifest = json.loads((PROVIDER_SCHEMA_DIR / "examples" / "manifest.json").read_text())
+        rpc_schema = json.loads((PROVIDER_SCHEMA_DIR / "rpc.schema.json").read_text())
+        invoke = json.loads((PROVIDER_SCHEMA_DIR / "examples" / "tool-invoke.json").read_text())
+        for fixture in parity["numeric_bounds"]:
+            kind = fixture["kind"]
+            if kind == "version":
+                value = json.loads(json.dumps(manifest))
+                value["version"] = fixture["value"]
+                schema = manifest_schema
+                semantic = validate_provider_manifest_contract
+            elif kind in {"deadline", "expiration"}:
+                value = json.loads(json.dumps(invoke))
+                if kind == "deadline":
+                    value["params"]["invocation"]["deadline_unix_ms"] = fixture["value"]
+                else:
+                    value["params"]["invocation"]["deadline_unix_ms"] = fixture["value"]
+                    value["params"]["secret_delivery"]["expires_at_unix_ms"] = fixture["value"]
+                schema = rpc_schema
+                semantic = validate_provider_rpc_contract
+            else:
+                value = {
+                    "jsonrpc": "2.0",
+                    "id": "numeric-code",
+                    "error": {"code": fixture["value"], "message": "error"},
+                }
+                schema = rpc_schema
+                semantic = validate_provider_rpc_contract
+            schema_valid = True
+            try:
+                validate(value, schema)
+            except SchemaViolation:
+                schema_valid = False
+            semantic_valid = True
+            try:
+                semantic(value)
+            except SchemaViolation:
+                semantic_valid = False
+            with self.subTest(kind=kind, value=fixture["value"]):
+                self.assertEqual(schema_valid, fixture["valid"])
+                self.assertEqual(semantic_valid, fixture["valid"])
+
+    def test_provider_local_schema_adversarial_fixtures_match_python_semantics(self):
+        fixtures = json.loads(
+            (PROVIDER_SCHEMA_DIR / "local-schema-fixtures.json").read_text()
+        )
+        for fixture in fixtures["positive"]:
+            with self.subTest(name=fixture["name"], polarity="positive"):
+                validate_provider_local_schema(fixture["schema"])
+        for fixture in fixtures["negative"]:
+            with self.subTest(name=fixture["name"], polarity="negative"):
+                with self.assertRaises(SchemaViolation):
+                    validate_provider_local_schema(fixture["schema"])
+        for fixture in fixtures["numeric_cases"]:
+            with self.subTest(name=fixture["name"], polarity="numeric"):
+                schema_valid = True
+                try:
+                    validate_provider_local_schema(fixture["schema"])
+                    if "value" in fixture:
+                        validate(fixture["value"], fixture["schema"])
+                except SchemaViolation:
+                    schema_valid = False
+                self.assertEqual(schema_valid, fixture["valid"])
+
+        manifest_schema = json.loads((PROVIDER_SCHEMA_DIR / "manifest.schema.json").read_text())
+        base = json.loads((PROVIDER_SCHEMA_DIR / "examples" / "manifest.json").read_text())
+        expressible = {
+            "additionalProperties must be boolean",
+            "metadata rejects U+0085",
+            "property names reject U+0085",
+            "enum must be non-empty",
+            "enum values must be unique",
+            "integer keyword rejects boolean",
+            "numeric keyword rejects string",
+        }
+        for fixture in fixtures["negative"]:
+            if fixture["name"] not in expressible:
+                continue
+            value = json.loads(json.dumps(base))
+            value["tools"][0]["input_schema"] = fixture["schema"]
+            with self.subTest(name=fixture["name"], polarity="json-schema"):
+                with self.assertRaises(SchemaViolation):
+                    validate(value, manifest_schema)
+
+        byte_boundary = json.loads(json.dumps(base))
+        byte_boundary["tools"][0]["input_schema"] = {
+            "type": "object",
+            "properties": {"é" * 64: {"type": "string"}},
+        }
+        validate(byte_boundary, manifest_schema)
+        validate_provider_manifest_contract(byte_boundary)
+        byte_boundary["tools"][0]["input_schema"]["properties"]["é" * 65] = {
+            "type": "string"
+        }
+        with self.assertRaises(SchemaViolation):
+            validate_provider_manifest_contract(byte_boundary)
+
+    def test_provider_rpc_utf8_byte_bounds_are_checked_semantically(self):
+        schema = json.loads((PROVIDER_SCHEMA_DIR / "rpc.schema.json").read_text())
+        response = {"jsonrpc": "2.0", "id": "unicode-error", "error": {"code": -1, "message": "é" * 256}}
+        validate(response, schema)
+        validate_provider_rpc_contract(response)
+        response["error"]["message"] += "é"
+        validate(response, schema)
+        with self.assertRaises(SchemaViolation):
+            validate_provider_rpc_contract(response)
+        response["error"]["message"] = "\u0085"
+        with self.assertRaises(SchemaViolation):
+            validate(response, schema)
+        with self.assertRaises(SchemaViolation):
+            validate_provider_rpc_contract(response)
+
+        initialize = json.loads((PROVIDER_SCHEMA_DIR / "examples" / "initialize.json").read_text())
+        initialize["params"]["limits"] = {
+            "max_frame_bytes": 1024, "max_json_depth": 4, "max_members": 8, "max_timeout_ms": 1000
+        }
+        validate(initialize, schema)
+        validate_provider_rpc_contract(initialize)
+
+    def test_provider_signed_package_manifest_utf8_byte_bound_is_semantic(self):
+        schema = json.loads((PROVIDER_SCHEMA_DIR / "signed-package.schema.json").read_text())
+        value = json.loads(json.dumps(schema["examples"][0]))
+        value["manifest"] = "é" * (256 * 1024 // 2)
+        validate(value, schema)
+        validate_provider_signed_package_contract(value)
+        value["manifest"] += "é"
+        validate(value, schema)
+        with self.assertRaises(SchemaViolation):
+            validate_provider_signed_package_contract(value)
+
+    def test_provider_abi_examples_have_canonical_methods_and_no_redeem_surface(self):
+        expected = {
+            "initialize.json": "gorce.initialize",
+            "tool-invoke.json": "tool.invoke",
+            "operation-cancel.json": "operation.cancel",
+        }
+        for filename, method in expected.items():
+            value = json.loads((PROVIDER_SCHEMA_DIR / "examples" / filename).read_text())
+            self.assertEqual(value["method"], method)
+            self.assertIsInstance(value["id"], str)
+            self.assertLessEqual(len(value["id"].encode("ascii")), 64)
+        provider_text = "\n".join(path.read_text() for path in PROVIDER_SCHEMA_DIR.rglob("*.json"))
+        self.assertNotIn("credentials/redeem", provider_text)
+        self.assertNotIn("tools/invoke", provider_text)
+
+    def test_provider_rust_and_spawned_mock_contracts_are_exercised(self):
+        cargo = shutil.which("cargo") or "/opt/homebrew/opt/rustup/bin/cargo"
+        subprocess.check_call(
+            [cargo, "test", "--locked", "-p", "gorce-provider-abi", "-p", "mock-web-search"],
+            cwd=ROOT,
+            env={
+                **os.environ,
+                "PATH": "/opt/homebrew/opt/rustup/bin:" + os.environ.get("PATH", ""),
+            },
+        )
 
 
 if __name__ == "__main__":
