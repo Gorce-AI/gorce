@@ -714,6 +714,7 @@ pub struct ProviderRegistry {
 #[derive(Debug, Clone, Copy)]
 enum PublicationFault {
     BeforeReplace,
+    #[cfg(unix)]
     ReplaceCallFailure,
     AfterReplace,
 }
@@ -847,19 +848,14 @@ impl ProviderRegistry {
         if matches!(fault, Some(PublicationFault::BeforeReplace)) {
             return Err(RegistryError::FaultInjected("before_registry_replace"));
         }
-        #[cfg(test)]
+        #[cfg(all(test, unix))]
         let before_replace_hook = if matches!(fault, Some(PublicationFault::ReplaceCallFailure)) {
-            #[cfg(unix)]
-            {
-                Some(force_replace_call_failure as fn(&Path))
-            }
-            #[cfg(not(unix))]
-            {
-                None
-            }
+            Some(force_replace_call_failure as fn(&Path))
         } else {
             None
         };
+        #[cfg(all(test, not(unix)))]
+        let before_replace_hook = None;
         let report = match publish_registry_document(
             &self.root,
             &candidate,
@@ -906,7 +902,7 @@ impl ProviderRegistry {
         });
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn inject_replace_call_failure(&self) {
         *self.fault.lock().unwrap() = Some(PublicationFault::ReplaceCallFailure);
     }
