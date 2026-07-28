@@ -456,7 +456,10 @@ def _json_equal(left, right):
 
 
 def validate_provider_https_url(value, allow_path):
-    parsed = urlparse(value)
+    try:
+        parsed = urlparse(value)
+    except ValueError as error:
+        raise SchemaViolation("provider URL is not canonical HTTPS syntax") from error
     try:
         port = parsed.port
     except ValueError as error:
