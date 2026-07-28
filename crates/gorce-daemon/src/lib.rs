@@ -2788,7 +2788,12 @@ mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::{Method, Request};
     use std::process::Command;
+    #[cfg(windows)]
+    use std::sync::Mutex;
     use tower::util::ServiceExt;
+
+    #[cfg(windows)]
+    static WINDOWS_DEFAULT_ROOT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_state() -> (Arc<DaemonState>, PathBuf) {
         let provider_data_root = std::env::current_dir()
@@ -2857,6 +2862,8 @@ mod tests {
 
     #[test]
     fn provider_data_root_uses_durable_default_and_is_separate_from_runtime() {
+        #[cfg(windows)]
+        let _default_root_test_lock = WINDOWS_DEFAULT_ROOT_TEST_LOCK.lock().unwrap();
         let default_root = platform_provider_data_root().unwrap();
         #[cfg(windows)]
         assert_eq!(
@@ -2932,6 +2939,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_native_defaults_construct_distinct_runtime_and_provider_roots() {
+        let _default_root_test_lock = WINDOWS_DEFAULT_ROOT_TEST_LOCK.lock().unwrap();
         struct LocalAppDataGuard(Option<std::ffi::OsString>);
 
         impl Drop for LocalAppDataGuard {
@@ -2971,6 +2979,56 @@ mod tests {
         fs::remove_dir_all(provider_root).unwrap();
         drop(previous);
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_default_roots_are_isolated_for_parallel_test_instances() {
+        if std::env::var_os("GORCE_WINDOWS_DEFAULT_ROOT_HELPER").is_some() {
+            let result = Daemon::new(DaemonConfig::default());
+            if result.is_ok() {
+                std::thread::sleep(Duration::from_millis(300));
+                std::process::exit(0);
+            }
+            std::process::exit(1);
+        }
+
+        let first_root = std::env::current_dir().unwrap().join(format!(
+            ".gorce-windows-default-parallel-{}",
+            Uuid::new_v4()
+        ));
+        let second_root = std::env::current_dir().unwrap().join(format!(
+            ".gorce-windows-default-parallel-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&first_root).unwrap();
+        fs::create_dir_all(&second_root).unwrap();
+        let executable = std::env::current_exe().unwrap();
+        let mut children = [
+            Command::new(&executable)
+                .arg("--exact")
+                .arg("tests::windows_default_roots_are_isolated_for_parallel_test_instances")
+                .arg("--nocapture")
+                .env("GORCE_WINDOWS_DEFAULT_ROOT_HELPER", "1")
+                .env("LOCALAPPDATA", &first_root)
+                .spawn()
+                .unwrap(),
+            Command::new(&executable)
+                .arg("--exact")
+                .arg("tests::windows_default_roots_are_isolated_for_parallel_test_instances")
+                .arg("--nocapture")
+                .env("GORCE_WINDOWS_DEFAULT_ROOT_HELPER", "1")
+                .env("LOCALAPPDATA", &second_root)
+                .spawn()
+                .unwrap(),
+        ];
+        let statuses = children
+            .iter_mut()
+            .map(|child| child.wait().unwrap().success())
+            .collect::<Vec<_>>();
+        assert_eq!(statuses, vec![true, true]);
+        fs::remove_dir_all(first_root).unwrap();
+        fs::remove_dir_all(second_root).unwrap();
     }
 
     #[test]
