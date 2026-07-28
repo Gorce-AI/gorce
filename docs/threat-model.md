@@ -17,6 +17,11 @@
 - Daemon-global `provider_data_root`, its fixed `FORMAT` and `LOCK`, canonical
   `registry.json`, generation, strict source approval records, `approval_id`
   values, publication candidates, and durability results.
+- Future adapter package identity, closed CLI policy, separate
+  `provider_cache_root`, revalidated launch bytes, bounded diagnostics, and
+  coarse CLI availability/authentication status. Official CLI credential
+  stores and profiles remain vendor-owned opaque assets that Gorce must not
+  read.
 - Integrity of the storage format and indexes.
 - Release artifacts, dependencies, and source supply chain.
 
@@ -34,8 +39,14 @@
   are not current runtime components.
 - The daemon-global provider registry storage boundary defined by ADR 0006; its
   narrow storage implementation is current, while an install route is not.
-- Future source materialization and daemon-owned loopback OAuth state, callback,
-  refresh, and recovery.
+- Future source materialization and, only for a later V2 `host_secret` path,
+  daemon-owned loopback OAuth state, callback, refresh, and recovery.
+- `official_cli_session` is explicitly outside that OAuth boundary: its vendor
+  session remains owned and opaque to the external official CLI.
+- The future daemon-private adapter-to-official-CLI boundary. The adapter and
+  official CLI run as trusted same-user code; this boundary is not a sandbox.
+- The future separate provider cache root and its revalidation boundary; cache
+  bytes cannot become approval authority.
 - Build and release automation.
 
 ## Threats
@@ -79,6 +90,17 @@
 - A stale lock, concurrent writer, temporary candidate, partial replacement,
   or platform durability gap loses an approved record or makes an uncommitted
   record appear authoritative.
+- V1/V2 authentication confusion treats a V1 nullable binding as an official
+  CLI session, or a client supplies an unknown V2 auth tag.
+- A Gorce adapter is mistaken for an official vendor provider, or Gorce reads,
+  copies, parses, injects, refreshes, or deletes vendor CLI credentials.
+- A caller supplies an arbitrary CLI executable, flag, environment, profile,
+  repository, working directory, prompt, or session and escapes the closed
+  diagnostic policy.
+- A cache path or launch byte is trusted without the opaque source-to-approval
+  chain, or a pooled process retains a prior diagnostic's authority.
+- Operator login occurs before source approval, materialization, supervision,
+  fake-CLI, redaction, consent, and admissions gates are complete.
 
 ## Mitigations and gaps
 
@@ -185,6 +207,40 @@ are reported separately; Windows does not claim Unix directory-fsync
 equivalence. This storage contract is a current runtime implementation, but it
 does not provide installation, source transport, or provider hosting.
 
+ADR 0007 is the user-approved provider-runtime Phase 0 architectural boundary,
+not runtime evidence; its Oracle documentation gate remains pending. V1 remains
+frozen; a future V2 may use only the explicit
+`none`, `host_secret`, or `official_cli_session` tags. The official-CLI tag
+names a closed host policy and has no credential class or secret delivery.
+Gorce must not own vendor OAuth, tokens, refresh, credential parsing, files, or
+profiles. Codex and Claude Code remain external official CLIs invoked by Gorce
+adapter packages, not official vendor providers.
+
+The future authority chain is opaque verified source -> source approval and
+`approval_id` -> separately revalidated `provider_cache_root` bytes ->
+daemon-private one-shot adapter host -> later-approved official CLI policy.
+Registry and cache roots remain separate. Setup is intended to require a later
+closed pinned-Git binary-bundle catalog, exact identity, and human approval; the
+concrete pins, bundle mapping, and cache/platform values are not approved in
+Phase 0. No arbitrary executable or source build is authority. A
+trusted-same-user warning is mandatory because the
+adapter/CLI may access same-user files and credentials; the non-reading rule is
+not sandboxing.
+
+The only future public scope before a separate admissions redesign is approved
+setup/materialization, coarse CLI availability/authentication status, and one
+diagnostic connection test under later-approved prompt and budget values. A
+single bounded adapter process is contained and reaped per diagnostic; no
+pooling, arbitrary prompt/tool/repo, or general execution is admitted. Closed
+Codex/Claude policies must later record versions, argv, environment, cwd,
+structured output, budgets, redaction, cancellation, and auth-failure mapping
+per ADR 0007's normative signoff record; these values are not yet approved.
+Claude `--bare`, `claude setup-token`, and
+environment OAuth tokens are excluded. Fake-CLI behavior evidence is required.
+No operator login is permitted until the later V2, authority, materialization,
+platform/process, fake-CLI, diagnostic, redaction, consent, and admissions gates
+pass.
+
 The wire boundary is strict `gorce.provider/v1` JSON-RPC 2.0 LF-NDJSON. There
 is exactly one first `gorce.initialize` request, followed only by
 `tool.invoke`, `operation.cancel`, and `gorce.shutdown`. Host-generated ASCII
@@ -243,9 +299,12 @@ rejected by Rust deserialization and by the schemas. Uncredentialed invocations
 use three explicit `null` values, while credentialed invocations use three
 matching non-null values.
 
-The future host/broker owns OAuth state, PKCE verifier, callback, exchange,
-refresh, token lifecycle, canonical URL parsing, literal HTTPS/origin policy,
-and DNS policy. OAuth host validation is canonical and shared by Rust, JSON
+For a future V2 `host_secret` path only, the host/broker may own OAuth state,
+PKCE verifier, callback, exchange, refresh, token lifecycle, canonical URL
+parsing, literal HTTPS/origin policy, and DNS policy. `official_cli_session`
+never uses this Gorce OAuth path: the external official CLI owns its vendor
+session and Gorce does not parse or store it. OAuth host validation is canonical
+and shared by Rust, JSON
 Schema, and Python: lower-case DNS labels or canonical IP literals are allowed;
 IPv4 hosts use exactly four decimal octets in `0..=255` without leading zeroes.
 Noncanonical decimal, hexadecimal, octal-like, short-form, and mixed numeric
@@ -309,11 +368,13 @@ non-success/no-response path, and checks sentinel non-disclosure. This is test
 harness supervision; the package host/process supervisor is not implemented
 yet.
 
-The narrow Phase 2 implementation stops at resolver-snapshot source proof and
-the storage-only approval registry contract. Git network transport, source
-materialization, executable launch/process lifecycle, protected credentials,
-OAuth exchange/callback/token state, package host/broker, daemon install or
-provider routes, SDK/TUI/client surfaces, authoring surfaces, and integration
-evidence remain unimplemented Phase 2/3 boundaries. The trusted-after-approval
-model is explicitly not a sandbox; an untrusted package mode requires separate
+The narrow Phase 2 implementation stops at resolver-snapshot source proof, the
+storage-only approval registry contract, and Phase 0 provider-runtime
+documentation. V2 implementation, CLI adapters, provider cache/materialization,
+Git network transport, executable launch/process lifecycle, protected
+credentials, OAuth exchange/callback/token state, package host/broker, daemon
+install or provider routes, SDK/TUI/client surfaces, authoring surfaces, and
+integration evidence remain unimplemented Phase 2/3 boundaries. No operator
+login is permitted at this phase. The trusted-after-approval model is
+explicitly not a sandbox; an untrusted package mode requires separate
 cross-platform sandboxing and/or a host-mediated HTTP proxy review.

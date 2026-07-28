@@ -192,6 +192,20 @@ No filesystem contract promises power-loss durability beyond the guarantees
 the platform and filesystem actually provide. The storage API must not label a
 best-effort Windows directory-entry result as Unix-equivalent durability.
 
+## Relationship to ADR 0007
+
+`provider_data_root` remains the sole durable approval authority. The
+provider-runtime design in ADR 0007 introduces a separate future
+`provider_cache_root` for bounded materialized adapter launch artifacts; it
+must never be a child or replacement of this registry root. A cache entry is
+usable only after revalidation against the opaque source proof, the exact
+approval record, and its `approval_id`. The cache stores no approval authority,
+credentials, OAuth state, or arbitrary caller-selected executable. This ADR
+does not authorize cache creation, materialization, provider launch, or CLI
+execution. Any future daemon-owned OAuth/token lifecycle associated with this
+storage remains limited to V2 `host_secret`; `official_cli_session` is external
+CLI-owned and its vendor session is never stored in this registry or cache.
+
 ## Consequences and phase boundary
 
 The registry gives the daemon one inspectable, bounded, atomically published

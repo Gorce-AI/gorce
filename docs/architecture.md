@@ -97,6 +97,51 @@ protected credential persistence, or daemon-owned OAuth in this repository. The
 storage root contains approval metadata only; it does not contain a cloned
 source tree or executable.
 
+## Provider-runtime Phase 0 boundary
+
+ADR 0007 freezes documentation for a possible provider runtime without
+authorizing its implementation. `gorce.provider/v1` remains frozen. A future
+V2 may use one explicit tagged authentication binding—`none`, `host_secret`, or
+`official_cli_session`—but no V2 schema or runtime auth method is shipped. V2
+must not reinterpret V1 nullable fields. Gorce does not own vendor OAuth,
+tokens, refresh, credential files, profile contents, token injection, or
+vendor credential parsing.
+
+Codex and Claude Code are external official CLIs invoked by future Gorce
+adapter packages; they are not official vendor providers or Gorce-owned vendor
+identities. The adapter identity is approved through the opaque chain
+`VerifiedProviderSource -> ProviderApprovalTuple -> provider_data_root approval
+record/approval_id -> revalidated provider_cache_root launch bytes ->
+daemon-private adapter host -> fixed CLI policy`. The registry and future cache
+roots are separate; cache bytes are never approval authority. Source-bundle
+setup is intended to use a later closed catalog of pinned-Git binary bundles,
+but catalog pins, bundle mapping, cache layout, and exact identity policy are
+not approved in Phase 0. No arbitrary source build, caller-selected
+executable, or implicit approval is allowed; the later closed-setup gate must
+record the concrete catalog and human approval rules.
+
+The first future host is one adapter process per diagnostic request, with
+process-tree containment/reaping, bounded output/lifetime, strict
+argv/environment/cwd policy, and redacted output. The concrete platform
+containment mechanism, cache behavior, versions, argv, environment, cwd,
+diagnostic prompt, and time/turn/spend/output values are deferred to the
+normative signoff record in ADR 0007. Candidate command families are `codex exec --json`
+and headless `claude -p`; they are not frozen policy values. The later policy
+gate must also project only coarse CLI availability/authentication status,
+reject Claude `--bare`, exclude `claude setup-token` and environment OAuth
+tokens, remove ambient vendor credentials, and use fake executables to prove
+the recorded behavior before live diagnostics.
+
+Until a separate admissions redesign, the only future public controls are
+approved setup/materialization, coarse status, and one diagnostic connection
+test under later-approved prompt and budget values. General provider execution,
+public invocation, login, and vendor OAuth remain disabled. The
+trusted-same-user warning is mandatory: an adapter and official CLI can access
+same-user files and credentials, and the non-reading policy is not a sandbox.
+No operator login is permitted until the later V2, authority/materialization,
+platform/process, fake-CLI, diagnostic, redaction, consent, and admissions
+gates sign off their concrete values.
+
 The current Phase 1 `verify_provider_archive(archive_bytes)` implementation
 still verifies the bounded signed ZIP, exact manifest bytes, regular-file ZIP
 modes, file table, and executable hash. That signed-archive path is retained
@@ -180,6 +225,12 @@ and Python use the same rule. Authorities reject percent-encoded or
 backslash-normalized text; explicit ports are non-zero decimal u16 values
 without leading zeroes, and explicit `:443` is noncanonical while `:80` is
 accepted.
+
+Those generic daemon-owned OAuth/token lifecycle rules apply only to a future
+V2 `host_secret` path. `official_cli_session` never enters the Gorce OAuth
+path: the external official CLI owns its vendor login, session, refresh, and
+logout, and Gorce must not parse or store that credential material. The exact
+`host_secret` contract remains a later V2 human gate.
 Local schemas and runtime metadata are validated for
 exact equivalence with the approved manifest; `tool.invoke` input is an object
 and Rust/schema/Python validation share that object-only contract. JSON Schema
@@ -247,13 +298,15 @@ bounded test-process reap and stderr capture solely to prove Phase 1
 abnormal-exit behavior; that is not a production provider supervisor.
 
 ADR 0005 records the narrow Phase 2 source-proof boundary and ADR 0006 records
-the storage-only daemon-global registry boundary. Git transport, source
-materialization, executable launch/process lifecycle, credentials/OAuth,
-provider host/broker integration, daemon install/provider routes, scoped lease
-issuance, and authorization integration remain future work. Phase 3 is the
-first phase for authenticated daemon routes, SDK/client models, authoring
-surfaces, and public-boundary integration evidence. These stop lines do not
-claim a sandbox or an untrusted package mode.
+the storage-only daemon-global registry boundary. ADR 0007 is documentation-only
+and does not implement V2, a provider runtime, CLI adapters, a cache, process
+hosting, login, or diagnostics. Git transport, source materialization,
+executable launch/process lifecycle, credentials/OAuth, provider host/broker
+integration, daemon install/provider routes, scoped lease issuance, and
+authorization integration remain future work. Phase 3 is the first phase for
+authenticated daemon routes, SDK/client models, authoring surfaces, and
+public-boundary integration evidence. These stop lines do not claim a sandbox
+or an untrusted package mode.
 
 ## Compatibility
 
@@ -261,4 +314,5 @@ The provider ABI and daemon protocol are separate public compatibility surfaces.
 Changes require an explicit versioning decision, migration or recovery
 behavior, and tests. See `api-versioning.md`, `adr/0004-community-provider-abi-v1.md`,
 `adr/0005-phase-2-provider-install-and-host.md`,
-`adr/0006-phase-2-provider-registry-storage.md`, and `threat-model.md`.
+`adr/0006-phase-2-provider-registry-storage.md`,
+`adr/0007-provider-runtime-official-cli-adapters.md`, and `threat-model.md`.

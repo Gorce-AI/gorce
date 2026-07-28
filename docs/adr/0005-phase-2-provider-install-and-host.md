@@ -163,6 +163,18 @@ The separately versioned provider ABI and the pure approval/lease contracts
 remain shared foundations. The source proof does not change the ABI wire
 methods or add runtime I/O.
 
+## Relationship to ADR 0007
+
+ADR 0007 is a later Phase 0 documentation boundary for provider-runtime
+adapters. It leaves this source proof, its opaque `VerifiedProviderSource`, and
+its unsigned trusted-same-user warning unchanged. A future adapter must use
+the source proof and the durable approval record as authority; it may not trust
+a caller-supplied CLI path, manifest, cache path, or vendor credential. Any
+future daemon-owned OAuth/token lifecycle described by this ADR applies only
+to a V2 `host_secret` path; `official_cli_session` remains external CLI-owned
+and never enters that Gorce OAuth path. ADR 0007 adds no V1 auth method,
+provider launch, materialization, vendor OAuth, or login flow.
+
 ## Phase boundary and consequences
 
 This ADR implements only source identity, snapshot verification, opaque proof
@@ -177,4 +189,8 @@ The proof makes the resolver-supplied source identity and exact bytes
 auditable, while deliberately making no publisher-authenticity claim. A later
 installation/hosting decision must separately define transport trust, durable
 storage, atomic materialization, process lifecycle, explicit user approval
-surfaces, and daemon-owned OAuth.
+surfaces, and daemon-owned OAuth for `host_secret` only. Provider-runtime Phase
+0 separately stops at
+documentation: it does not authorize V2 implementation, cache materialization,
+CLI execution, credentials, login, public routes, SDK/TUI provider surfaces, or
+general execution.
