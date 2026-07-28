@@ -265,7 +265,10 @@ impl SecureRuntime {
         #[cfg(unix)]
         let inner = self.directory.lock(name)?;
         #[cfg(windows)]
-        let inner = self.directory.lock(name).map_err(map_windows_error)?;
+        let inner = self
+            .directory
+            .lock(name)
+            .map_err(map_windows_security_error)?;
         Ok(LockGuard { inner })
     }
 
@@ -326,6 +329,24 @@ impl Drop for LockGuard {
         self.inner.unlock();
         #[cfg(windows)]
         let _ = &self.inner;
+    }
+}
+
+impl LockGuard {
+    /// Return the sentinel length through the already-held lock handle.
+    ///
+    /// Windows may reject opening the same locked file through a second
+    /// handle, so callers that already own the lock must use this method
+    /// rather than reopening the protected child.
+    pub fn file_len(&self) -> Result<u64, SecurityError> {
+        #[cfg(unix)]
+        {
+            self.inner.file_len().map_err(SecurityError::from)
+        }
+        #[cfg(windows)]
+        {
+            self.inner.file_len().map_err(map_windows_error)
+        }
     }
 }
 
@@ -688,6 +709,10 @@ mod unix {
         pub(super) fn unlock(&mut self) {
             let _ = fs2::FileExt::unlock(&self.file);
         }
+
+        pub(super) fn file_len(&self) -> io::Result<u64> {
+            self.file.metadata().map(|metadata| metadata.len())
+        }
     }
 
     fn validate_directory(file: &File) -> Result<(), SecurityError> {
@@ -797,6 +822,21 @@ mod tests {
 
         drop(runtime);
         fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn held_lock_exposes_sentinel_length_without_reopening_it() {
+        let root = temporary_directory("held-lock");
+        let runtime = SecureRuntime::open(&root).unwrap();
+        let lock = runtime.lock("LOCK").unwrap();
+
+        assert_eq!(lock.file_len().unwrap(), 0);
+        assert_eq!(runtime.read_private("LOCK").unwrap(), Some(Vec::new()));
+
+        drop(lock);
+        assert_eq!(runtime.read_private("LOCK").unwrap(), Some(Vec::new()));
+        drop(runtime);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

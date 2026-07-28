@@ -2789,7 +2789,7 @@ mod tests {
     use axum::http::{Method, Request};
     use std::process::Command;
     #[cfg(windows)]
-    use std::sync::Mutex;
+    use std::sync::{Barrier, Mutex};
     use tower::util::ServiceExt;
 
     #[cfg(windows)]
@@ -2983,6 +2983,69 @@ mod tests {
         fs::remove_dir_all(provider_root).unwrap();
         drop(previous);
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_parallel_daemons_with_unique_explicit_roots_reload_successfully() {
+        let barrier = Arc::new(Barrier::new(3));
+        let first_barrier = Arc::clone(&barrier);
+        let first = std::thread::spawn(move || {
+            let runtime = std::env::current_dir()
+                .unwrap()
+                .join(format!(".gorce-windows-daemon-runtime-{}", Uuid::new_v4()));
+            let provider_root = std::env::current_dir()
+                .unwrap()
+                .join(format!(".gorce-windows-daemon-provider-{}", Uuid::new_v4()));
+            first_barrier.wait();
+            let daemon = Daemon::new(
+                DaemonConfig::default()
+                    .with_runtime_dir(&runtime)
+                    .with_provider_data_root_for_test(&provider_root),
+            )
+            .unwrap();
+            assert_eq!(daemon.runtime.path(), runtime.as_path());
+            assert_eq!(
+                daemon.state._provider_registry.root(),
+                provider_root.as_path()
+            );
+            drop(daemon);
+            ProviderRegistry::open(&provider_root).unwrap();
+            (runtime, provider_root)
+        });
+
+        let second_barrier = Arc::clone(&barrier);
+        let second = std::thread::spawn(move || {
+            let runtime = std::env::current_dir()
+                .unwrap()
+                .join(format!(".gorce-windows-daemon-runtime-{}", Uuid::new_v4()));
+            let provider_root = std::env::current_dir()
+                .unwrap()
+                .join(format!(".gorce-windows-daemon-provider-{}", Uuid::new_v4()));
+            second_barrier.wait();
+            let daemon = Daemon::new(
+                DaemonConfig::default()
+                    .with_runtime_dir(&runtime)
+                    .with_provider_data_root_for_test(&provider_root),
+            )
+            .unwrap();
+            assert_eq!(daemon.runtime.path(), runtime.as_path());
+            assert_eq!(
+                daemon.state._provider_registry.root(),
+                provider_root.as_path()
+            );
+            drop(daemon);
+            ProviderRegistry::open(&provider_root).unwrap();
+            (runtime, provider_root)
+        });
+
+        barrier.wait();
+        let (first_runtime, first_provider) = first.join().unwrap();
+        let (second_runtime, second_provider) = second.join().unwrap();
+        fs::remove_dir_all(first_runtime).unwrap();
+        fs::remove_dir_all(first_provider).unwrap();
+        fs::remove_dir_all(second_runtime).unwrap();
+        fs::remove_dir_all(second_provider).unwrap();
     }
 
     #[cfg(windows)]

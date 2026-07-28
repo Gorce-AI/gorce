@@ -634,11 +634,15 @@ fn publish_registry_document(
     }
 }
 
-fn load_authoritative(root: &SecureRuntime) -> Result<RegistryDocument, RegistryError> {
-    match read_private(root, PROVIDER_REGISTRY_LOCK_FILE, 1)? {
-        Some(bytes) if bytes.is_empty() => {}
-        Some(_) => return recovery("LOCK must be a zero-length sentinel"),
-        None => return recovery("LOCK is missing"),
+fn load_authoritative(
+    root: &SecureRuntime,
+    lock: &LockGuard,
+) -> Result<RegistryDocument, RegistryError> {
+    let lock_len = lock
+        .file_len()
+        .map_err(|error| RegistryError::RecoveryNeeded(error.to_string()))?;
+    if lock_len != 0 {
+        return recovery("LOCK must be a zero-length sentinel");
     }
     let format = read_private(root, FORMAT_FILE, 128)?;
     let registry = read_private(root, PROVIDER_REGISTRY_FILE, MAX_PROVIDER_REGISTRY_BYTES)?;
@@ -717,8 +721,8 @@ enum PublicationFault {
 impl ProviderRegistry {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, RegistryError> {
         let root = Arc::new(SecureRuntime::open(root).map_err(RegistryError::Security)?);
-        let _lock = registry_lock(&root)?;
-        let document = load_authoritative(&root)?;
+        let lock = registry_lock(&root)?;
+        let document = load_authoritative(&root, &lock)?;
         Ok(Self {
             root,
             state: Mutex::new(RegistryState {
@@ -746,8 +750,8 @@ impl ProviderRegistry {
         if state.poisoned {
             return Err(RegistryError::Poisoned);
         }
-        let _lock = registry_lock(&self.root)?;
-        let current = match load_authoritative(&self.root) {
+        let lock = registry_lock(&self.root)?;
+        let current = match load_authoritative(&self.root, &lock) {
             Ok(document) => document,
             Err(error) => {
                 state.poisoned = true;
@@ -787,7 +791,7 @@ impl ProviderRegistry {
         }
         state.document.generation += 1;
         let candidate = state.document.clone();
-        let report = match self.publish_locked(&mut state, candidate) {
+        let report = match self.publish_locked(&mut state, candidate, &lock) {
             Ok(report) => report,
             Err(error) => {
                 if !state.poisoned {
@@ -809,8 +813,8 @@ impl ProviderRegistry {
         if state.poisoned {
             return Err(RegistryError::Poisoned);
         }
-        let _lock = registry_lock(&self.root)?;
-        let current = match load_authoritative(&self.root) {
+        let lock = registry_lock(&self.root)?;
+        let current = match load_authoritative(&self.root, &lock) {
             Ok(document) => document,
             Err(error) => {
                 state.poisoned = true;
@@ -831,6 +835,7 @@ impl ProviderRegistry {
         &self,
         state: &mut RegistryState,
         candidate: RegistryDocument,
+        lock: &LockGuard,
     ) -> Result<DurabilityReport, RegistryError> {
         #[cfg(test)]
         let fault = self
@@ -875,7 +880,7 @@ impl ProviderRegistry {
                 "fault injected after replacement".to_owned(),
             ));
         }
-        let published = match load_authoritative(&self.root) {
+        let published = match load_authoritative(&self.root, lock) {
             Ok(document) => document,
             Err(error) => {
                 state.poisoned = true;
@@ -915,8 +920,8 @@ impl ProviderRegistry {
         if state.poisoned {
             return Err(RegistryError::Poisoned);
         }
-        let _lock = registry_lock(&self.root)?;
-        self.publish_locked(&mut state, document)
+        let lock = registry_lock(&self.root)?;
+        self.publish_locked(&mut state, document, &lock)
     }
 }
 
@@ -1053,6 +1058,169 @@ mod tests {
         ));
         drop(held);
         drop(registry);
+        cleanup(&root);
+    }
+
+    #[cfg(windows)]
+    const HELPER_READY_TIMEOUT: Duration = Duration::from_secs(5);
+    #[cfg(windows)]
+    const HELPER_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+    #[cfg(windows)]
+    const HELPER_HOLD_TIMEOUT: Duration = Duration::from_secs(15);
+
+    #[cfg(windows)]
+    struct LockHelperProcess {
+        child: Option<std::process::Child>,
+        release: PathBuf,
+        root: PathBuf,
+    }
+
+    #[cfg(windows)]
+    impl LockHelperProcess {
+        fn new(child: std::process::Child, release: PathBuf, root: PathBuf) -> Self {
+            Self {
+                child: Some(child),
+                release,
+                root,
+            }
+        }
+
+        fn wait_until_ready(&self, ready: &Path) -> bool {
+            let deadline = std::time::Instant::now() + HELPER_READY_TIMEOUT;
+            while std::time::Instant::now() < deadline {
+                if ready.exists() {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            ready.exists()
+        }
+
+        fn wait_for_exit(&mut self) -> Option<bool> {
+            let deadline = std::time::Instant::now() + HELPER_EXIT_TIMEOUT;
+            while std::time::Instant::now() < deadline {
+                let child = self.child.as_mut()?;
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        self.child.take();
+                        return Some(status.success());
+                    }
+                    Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                    Err(_) => return None,
+                }
+            }
+            None
+        }
+
+        fn kill_and_reap(&mut self) {
+            let Some(mut child) = self.child.take() else {
+                return;
+            };
+            let _ = child.kill();
+            let deadline = std::time::Instant::now() + HELPER_EXIT_TIMEOUT;
+            while std::time::Instant::now() < deadline {
+                match child.try_wait() {
+                    Ok(Some(_)) => return,
+                    Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                    Err(_) => break,
+                }
+            }
+            let _ = child.wait();
+        }
+
+        fn release_and_reap(&mut self) -> bool {
+            if std::fs::write(&self.release, b"release").is_err() {
+                self.kill_and_reap();
+                return false;
+            }
+            match self.wait_for_exit() {
+                Some(success) => success,
+                None => {
+                    self.kill_and_reap();
+                    false
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for LockHelperProcess {
+        fn drop(&mut self) {
+            if self.child.is_some() {
+                let _ = std::fs::write(&self.release, b"release");
+                if self.wait_for_exit().is_none() {
+                    self.kill_and_reap();
+                }
+            }
+            cleanup(&self.root);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn process_lock_contention_is_bounded_and_typed() {
+        if let Some(root) = std::env::var_os("GORCE_PROVIDER_REGISTRY_LOCK_HELPER_ROOT") {
+            let root = PathBuf::from(root);
+            let ready = PathBuf::from(
+                std::env::var_os("GORCE_PROVIDER_REGISTRY_LOCK_HELPER_READY").unwrap(),
+            );
+            let release = PathBuf::from(
+                std::env::var_os("GORCE_PROVIDER_REGISTRY_LOCK_HELPER_RELEASE").unwrap(),
+            );
+            let runtime = SecureRuntime::open(&root).unwrap();
+            let lock = runtime.lock(PROVIDER_REGISTRY_LOCK_FILE).unwrap();
+            std::fs::write(ready, b"ready").unwrap();
+            let deadline = std::time::Instant::now() + HELPER_HOLD_TIMEOUT;
+            while !release.exists() && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            drop(lock);
+            if !release.exists() {
+                std::process::exit(2);
+            }
+            return;
+        }
+
+        let root = temporary_root("process-lock-contention");
+        let registry = ProviderRegistry::open(&root).unwrap();
+        drop(registry);
+        let ready = root.join(".contention-ready");
+        let release = root.join(".contention-release");
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("provider_registry::tests::process_lock_contention_is_bounded_and_typed")
+            .arg("--nocapture")
+            .env("GORCE_PROVIDER_REGISTRY_LOCK_HELPER_ROOT", &root)
+            .env("GORCE_PROVIDER_REGISTRY_LOCK_HELPER_READY", &ready)
+            .env("GORCE_PROVIDER_REGISTRY_LOCK_HELPER_RELEASE", &release)
+            .spawn()
+            .unwrap_or_else(|error| {
+                cleanup(&root);
+                panic!("failed to spawn lock helper: {error}");
+            });
+        let mut helper = LockHelperProcess::new(child, release, root);
+
+        assert!(
+            helper.wait_until_ready(&ready),
+            "lock helper did not positively signal readiness"
+        );
+        let result = ProviderRegistry::open(&helper.root);
+        assert!(matches!(result, Err(RegistryError::LockContention)));
+        assert!(helper.release_and_reap());
+    }
+
+    #[test]
+    fn nonempty_lock_sentinel_is_recovery_needed() {
+        let root = temporary_root("nonempty-lock");
+        let registry = ProviderRegistry::open(&root).unwrap();
+        drop(registry);
+        std::fs::write(root.join(PROVIDER_REGISTRY_LOCK_FILE), b"not-empty").unwrap();
+
+        assert!(matches!(
+            ProviderRegistry::open(&root),
+            Err(RegistryError::RecoveryNeeded(reason))
+                if reason.contains("zero-length sentinel")
+        ));
         cleanup(&root);
     }
 
@@ -1410,5 +1578,49 @@ mod tests {
         drop(second_registry);
         drop(first_registry);
         cleanup(&root);
+    }
+
+    #[test]
+    fn parallel_unique_roots_open_register_match_and_reload() {
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let first_barrier = Arc::clone(&barrier);
+        let first = std::thread::spawn(move || {
+            let root = temporary_root("parallel-first");
+            let source = gorce_provider_abi::test_verified_source_fixture(
+                gorce_provider_abi::TestVerifiedSourceFixture::Base,
+            )
+            .unwrap();
+            first_barrier.wait();
+            let registry = ProviderRegistry::open(&root).unwrap();
+            assert!(registry.register_source(&source).unwrap().changed());
+            assert!(registry.matches_source(&source).unwrap());
+            drop(registry);
+            let reopened = ProviderRegistry::open(&root).unwrap();
+            assert!(reopened.matches_source(&source).unwrap());
+            drop(reopened);
+            root
+        });
+
+        let second_barrier = Arc::clone(&barrier);
+        let second = std::thread::spawn(move || {
+            let root = temporary_root("parallel-second");
+            let source = gorce_provider_abi::test_verified_source_fixture(
+                gorce_provider_abi::TestVerifiedSourceFixture::Replacement,
+            )
+            .unwrap();
+            second_barrier.wait();
+            let registry = ProviderRegistry::open(&root).unwrap();
+            assert!(registry.register_source(&source).unwrap().changed());
+            assert!(registry.matches_source(&source).unwrap());
+            drop(registry);
+            let reopened = ProviderRegistry::open(&root).unwrap();
+            assert!(reopened.matches_source(&source).unwrap());
+            drop(reopened);
+            root
+        });
+
+        barrier.wait();
+        cleanup(&first.join().unwrap());
+        cleanup(&second.join().unwrap());
     }
 }

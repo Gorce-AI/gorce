@@ -235,9 +235,9 @@ impl RuntimeDir {
         ffi::validate(&file, &self.identity)?;
         match file.try_lock_exclusive() {
             Ok(()) => Ok(LockGuard { file }),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Err(
-                SecurityError::Security("runtime instance lock is already held".to_owned()),
-            ),
+            Err(error) if lock_contended(&error) => Err(SecurityError::Security(
+                "runtime instance lock is already held".to_owned(),
+            )),
             Err(error) => Err(error.into()),
         }
     }
@@ -302,10 +302,22 @@ pub struct LockGuard {
     file: File,
 }
 
+impl LockGuard {
+    pub fn file_len(&self) -> Result<u64, SecurityError> {
+        Ok(self.file.metadata()?.len())
+    }
+}
+
 impl Drop for LockGuard {
     fn drop(&mut self) {
         let _ = fs2::FileExt::unlock(&self.file);
     }
+}
+
+fn lock_contended(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::WouldBlock
+        || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+        || error.raw_os_error() == Some(33)
 }
 
 fn validate_child_name(name: &str) -> Result<(), SecurityError> {
@@ -1253,6 +1265,25 @@ mod tests {
         assert!(runtime.read_private("identity").unwrap().is_none());
         assert!(runtime.read_private("created").unwrap().is_none());
 
+        drop(runtime);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn held_lock_uses_its_handle_for_sentinel_length() {
+        let root = temporary_directory("held-lock");
+        let runtime = RuntimeDir::open(&root).unwrap();
+        let lock = runtime.lock("LOCK").unwrap();
+
+        assert_eq!(lock.file_len().unwrap(), 0);
+        let second_handle = runtime.read_private("LOCK");
+        assert!(matches!(
+            second_handle,
+            Err(SecurityError::Io(error)) if error.raw_os_error() == Some(33)
+        ));
+
+        drop(lock);
+        assert_eq!(runtime.read_private("LOCK").unwrap(), Some(Vec::new()));
         drop(runtime);
         fs::remove_dir_all(root).unwrap();
     }
