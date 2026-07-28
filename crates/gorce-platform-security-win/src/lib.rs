@@ -12,7 +12,7 @@
 
 use std::fmt;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -46,6 +46,31 @@ impl std::error::Error for SecurityError {}
 impl From<io::Error> for SecurityError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+#[derive(Debug)]
+pub enum ReplacementError {
+    BeforePublication(SecurityError),
+}
+
+impl From<SecurityError> for ReplacementError {
+    fn from(error: SecurityError) -> Self {
+        Self::BeforePublication(error)
+    }
+}
+
+impl From<io::Error> for ReplacementError {
+    fn from(error: io::Error) -> Self {
+        Self::BeforePublication(SecurityError::Io(error))
+    }
+}
+
+impl ReplacementError {
+    fn into_security_error(self) -> SecurityError {
+        match self {
+            Self::BeforePublication(error) => error,
+        }
     }
 }
 
@@ -137,11 +162,32 @@ impl RuntimeDir {
             std::process::id(),
             TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
         );
-        validate_child_name(&temporary_name)?;
-        let result = (|| {
+        self.replace_private_validated(name, &temporary_name, contents, |_| Ok(()))
+            .map_err(ReplacementError::into_security_error)
+    }
+
+    pub fn replace_private_validated<F>(
+        &self,
+        name: &str,
+        temporary_name: &str,
+        contents: &[u8],
+        validate: F,
+    ) -> Result<DurabilityReport, ReplacementError>
+    where
+        F: FnOnce(&[u8]) -> Result<(), String>,
+    {
+        validate_child_name(name)?;
+        validate_child_name(temporary_name)?;
+        if name == temporary_name {
+            return Err(ReplacementError::BeforePublication(SecurityError::Invalid(
+                "replacement temporary name must differ from the target".to_owned(),
+            )));
+        }
+        self.remove_private(temporary_name)?;
+        let result: Result<DurabilityReport, ReplacementError> = (|| {
             let mut file = ffi::open_child(
                 &self.directory,
-                &temporary_name,
+                temporary_name,
                 true,
                 true,
                 true,
@@ -150,23 +196,28 @@ impl RuntimeDir {
             ffi::validate(&file, &self.identity)?;
             file.write_all(contents)?;
             file.sync_all()?;
-            ffi::replace(&self.directory, &file, name)?;
+            file.seek(SeekFrom::Start(0))?;
+            let mut candidate = Vec::with_capacity(contents.len());
+            Read::by_ref(&mut file)
+                .take(contents.len() as u64 + 1)
+                .read_to_end(&mut candidate)?;
+            if candidate.len() != contents.len() {
+                return Err(ReplacementError::BeforePublication(SecurityError::Invalid(
+                    "replacement candidate changed while being read".to_owned(),
+                )));
+            }
+            validate(&candidate).map_err(|error| {
+                ReplacementError::BeforePublication(SecurityError::Invalid(error))
+            })?;
+            ffi::replace(&self.directory, &file, name)
+                .map_err(ReplacementError::BeforePublication)?;
             drop(file);
             Ok(DurabilityReport {
                 directory_entry: DirectoryDurability::BestEffort,
             })
         })();
         if result.is_err() {
-            if let Ok(file) = ffi::open_child(
-                &self.directory,
-                &temporary_name,
-                true,
-                false,
-                true,
-                &self.identity,
-            ) {
-                let _ = ffi::dispose(&file);
-            }
+            let _ = self.remove_private(temporary_name);
         }
         result
     }
@@ -281,6 +332,8 @@ mod ffi {
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
     use std::ptr::null_mut;
+    #[cfg(test)]
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use std::mem::align_of;
     use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
@@ -323,6 +376,9 @@ mod ffi {
     use windows_sys::Win32::System::IO::{IO_STATUS_BLOCK, IO_STATUS_BLOCK_0};
 
     const FILE_RENAME_INFORMATION_CLASS: FILE_INFORMATION_CLASS = 10;
+
+    #[cfg(test)]
+    static FAIL_NEXT_REPLACE_CALL: AtomicBool = AtomicBool::new(false);
 
     struct OwnedHandle(HANDLE);
     impl Drop for OwnedHandle {
@@ -1045,6 +1101,15 @@ mod ffi {
         destination: &str,
     ) -> Result<(), SecurityError> {
         let (mut buffer, _file_name_length, buffer_size) = rename_info_buffer(destination)?;
+        #[cfg(test)]
+        let source_handle =
+            if destination == "registry" && FAIL_NEXT_REPLACE_CALL.swap(false, Ordering::SeqCst) {
+                INVALID_HANDLE_VALUE
+            } else {
+                handle(source)
+            };
+        #[cfg(not(test))]
+        let source_handle = handle(source);
         let mut status = IO_STATUS_BLOCK {
             Anonymous: IO_STATUS_BLOCK_0 { Status: 0 },
             Information: 0,
@@ -1053,7 +1118,7 @@ mod ffi {
             let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
             (*info).RootDirectory = handle(directory);
             let result = NtSetInformationFile(
-                handle(source),
+                source_handle,
                 &mut status,
                 info.cast(),
                 buffer_size,
@@ -1067,6 +1132,11 @@ mod ffi {
             }
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn fail_next_replace_call() {
+        FAIL_NEXT_REPLACE_CALL.store(true, Ordering::SeqCst);
     }
 
     pub(super) fn dispose(file: &File) -> Result<(), SecurityError> {
@@ -1133,13 +1203,18 @@ mod ffi {
 
 #[cfg(test)]
 mod tests {
-    use super::{DirectoryDurability, RuntimeDir};
+    use super::{DirectoryDurability, ReplacementError, RuntimeDir, SecurityError};
     use std::fs;
     use std::os::windows::fs::symlink_file;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+    // The replace fault seam is intentionally process-global inside `ffi`.
+    // Serialize the tests using its destination so parallel tests cannot
+    // consume one another's injected fault.
+    static REGISTRY_REPLACEMENT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn temporary_directory(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -1195,6 +1270,84 @@ mod tests {
         drop(runtime);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn validated_rejection_preserves_the_old_file_before_rename() {
+        let _test_lock = REGISTRY_REPLACEMENT_TEST_LOCK.lock().unwrap();
+        let root = temporary_directory("validated-rejection");
+        let runtime = RuntimeDir::open(&root).unwrap();
+        runtime.replace_private("registry", b"old").unwrap();
+
+        let failure =
+            runtime.replace_private_validated("registry", ".registry.tmp", b"new", |_| {
+                Err("reject before rename".to_owned())
+            });
+        assert!(matches!(
+            failure,
+            Err(ReplacementError::BeforePublication(SecurityError::Invalid(
+                _
+            )))
+        ));
+        assert_eq!(
+            runtime.read_private("registry").unwrap(),
+            Some(b"old".to_vec())
+        );
+
+        drop(runtime);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn prepublication_io_failure_preserves_the_old_file() {
+        let _test_lock = REGISTRY_REPLACEMENT_TEST_LOCK.lock().unwrap();
+        let root = temporary_directory("prepublication-io");
+        let runtime = RuntimeDir::open(&root).unwrap();
+        runtime.replace_private("registry", b"old").unwrap();
+        fs::create_dir(root.join(".registry.io")).unwrap();
+
+        let failure =
+            runtime.replace_private_validated("registry", ".registry.io", b"new", |_| Ok(()));
+        assert!(matches!(
+            failure,
+            Err(ReplacementError::BeforePublication(_))
+        ));
+        assert_eq!(
+            runtime.read_private("registry").unwrap(),
+            Some(b"old".to_vec())
+        );
+
+        drop(runtime);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn replacement_call_failure_after_validation_preserves_the_old_file() {
+        let _test_lock = REGISTRY_REPLACEMENT_TEST_LOCK.lock().unwrap();
+        let root = temporary_directory("replacement-call-failure");
+        let runtime = RuntimeDir::open(&root).unwrap();
+        runtime.replace_private("registry", b"old").unwrap();
+        let mut validated = false;
+        super::ffi::fail_next_replace_call();
+
+        let failure =
+            runtime.replace_private_validated("registry", ".registry.tmp", b"new", |candidate| {
+                assert_eq!(candidate, b"new");
+                validated = true;
+                Ok(())
+            });
+        assert!(matches!(
+            failure,
+            Err(ReplacementError::BeforePublication(SecurityError::Io(_)))
+        ));
+        assert!(validated);
+        assert_eq!(
+            runtime.read_private("registry").unwrap(),
+            Some(b"old".to_vec())
+        );
+
+        drop(runtime);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

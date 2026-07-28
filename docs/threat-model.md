@@ -14,6 +14,9 @@
 - Provider API keys, OAuth state/verifiers, access tokens, and refresh tokens.
 - Approved provider capability sets, tool schemas, invocation bindings, and
   operation deadlines.
+- Daemon-global `provider_data_root`, its fixed `FORMAT` and `LOCK`, canonical
+  `registry.json`, generation, strict source approval records, `approval_id`
+  values, publication candidates, and durability results.
 - Integrity of the storage format and indexes.
 - Release artifacts, dependencies, and source supply chain.
 
@@ -29,8 +32,10 @@
 - The sealed resolver-to-verifier boundary for a Phase 2 pinned Git source
   snapshot, entries, and declared digest; Git transport and source resolution
   are not current runtime components.
-- Future daemon-global provider data and daemon-owned loopback OAuth state,
-  callback, refresh, and recovery.
+- The daemon-global provider registry storage boundary defined by ADR 0006; its
+  narrow storage implementation is current, while an install route is not.
+- Future source materialization and daemon-owned loopback OAuth state, callback,
+  refresh, and recovery.
 - Build and release automation.
 
 ## Threats
@@ -68,6 +73,12 @@
   child unreaped, or turns abnormal child exit into a successful result.
 - A compromised dependency or release workflow ships malicious code.
 - Crash recovery loses, duplicates, or partially publishes a record.
+- A caller or provider poisons the registry with a forged approval record,
+  mismatched `approval_id`, unknown field, duplicate provider, stale generation,
+  or source approval that was not derived from `VerifiedProviderSource`.
+- A stale lock, concurrent writer, temporary candidate, partial replacement,
+  or platform durability gap loses an approved record or makes an uncommitted
+  record appear authoritative.
 
 ## Mitigations and gaps
 
@@ -152,11 +163,27 @@ across Rust source verification, JSON Schema validation, and Python semantic
 contract checks. Provider parity fixtures are additional cross-checks. They
 are proof/parity evidence, not Git transport or host implementation.
 
-The source proof is not an installer or host. Provider registry, persistence or
-recovery, staging/materialization, executable launch, process supervision,
-daemon routes, and OAuth callback, exchange, and token state are not
-implemented. A future explicitly approved same-user package remains trusted
-user code, not a sandbox or an official publisher package.
+The source proof is not an installer or host. Provider staging/materialization,
+executable launch, process supervision, daemon routes, and OAuth callback,
+exchange, and token state are not implemented. The narrow provider registry
+storage and recovery boundary is implemented. A future explicitly approved
+same-user package remains trusted user code, not a sandbox or an official
+publisher package.
+
+ADR 0006 defines the storage-only registry boundary that follows this proof.
+The daemon-global `provider_data_root` has only the fixed `FORMAT`, `LOCK`, and
+`registry.json` authority files in this slice. The bounded canonical registry
+stores strict source approval records and content-derived `approval_id` values;
+it stores no source tree, executable, credential, or OAuth state. Every read,
+recovery, and mutation uses the root lock and generation check. A complete
+same-directory candidate is flushed and atomically replaced, and temporary,
+oversized, malformed, mismatched, or duplicate records are never authority.
+Missing, truncated, unsupported, or invalid registry state fails closed rather
+than becoming an empty registry or being repaired by dropping records. Unix
+directory synchronization and Windows write-through/atomic-replacement limits
+are reported separately; Windows does not claim Unix directory-fsync
+equivalence. This storage contract is a current runtime implementation, but it
+does not provide installation, source transport, or provider hosting.
 
 The wire boundary is strict `gorce.provider/v1` JSON-RPC 2.0 LF-NDJSON. There
 is exactly one first `gorce.initialize` request, followed only by
@@ -283,10 +310,10 @@ harness supervision; the package host/process supervisor is not implemented
 yet.
 
 The narrow Phase 2 implementation stops at resolver-snapshot source proof and
-source-based approval derivation. Git network transport, registry, package
-host/broker, provider persistence, source materialization, executable launch,
-protected credential persistence, network OAuth exchange/callback, daemon
-provider routes, SDK/TUI surfaces, authoring surfaces, and integration evidence
-remain unimplemented Phase 2/3 boundaries. The trusted-after-approval model is
-explicitly not a sandbox; an untrusted package mode requires separate
+the storage-only approval registry contract. Git network transport, source
+materialization, executable launch/process lifecycle, protected credentials,
+OAuth exchange/callback/token state, package host/broker, daemon install or
+provider routes, SDK/TUI/client surfaces, authoring surfaces, and integration
+evidence remain unimplemented Phase 2/3 boundaries. The trusted-after-approval
+model is explicitly not a sandbox; an untrusted package mode requires separate
 cross-platform sandboxing and/or a host-mediated HTTP proxy review.

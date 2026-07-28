@@ -10,10 +10,14 @@ members = [
     "crates/gorce-platform-security",
     "crates/gorce-platform-security-win",
     "crates/gorce-store-writer",
+    "crates/gorce-provider-runtime",
     "crates/gorce-sdk",
     "crates/gorce-tui",
     "crates/gorce",
     "providers/mock-web-search",
+    "providers/claude-code",
+    "providers/codex",
+    "providers/provider-template",
     "xtask",
 ]
 

@@ -206,7 +206,10 @@ impl ProviderApprovalTuple {
     ) -> Result<Self, ProviderPolicyError> {
         Self::from_verified_parts(
             artifact.manifest(),
-            artifact.signed_manifest().as_bytes(),
+            ManifestApprovalInput {
+                bytes: artifact.signed_manifest().as_bytes(),
+                digest: None,
+            },
             artifact.archive_digest(),
             artifact.executable_path(),
             artifact.executable_bytes(),
@@ -230,9 +233,13 @@ impl ProviderApprovalTuple {
                 "verified provider source has an inconsistent manifest digest".to_owned(),
             ));
         }
+        let neutral_manifest_bytes = neutral_source_manifest_bytes(artifact.manifest_bytes())?;
         Self::from_verified_parts(
             artifact.manifest(),
-            artifact.manifest_bytes(),
+            ManifestApprovalInput {
+                bytes: &neutral_manifest_bytes,
+                digest: Some(artifact.manifest_digest()),
+            },
             artifact.source_content_digest(),
             artifact.executable_path(),
             artifact.executable_bytes(),
@@ -248,7 +255,7 @@ impl ProviderApprovalTuple {
 
     fn from_verified_parts(
         manifest: &Manifest,
-        signed_manifest_bytes: &[u8],
+        manifest_input: ManifestApprovalInput<'_>,
         package_digest: &str,
         executable_path: &str,
         executable_bytes: &[u8],
@@ -256,7 +263,7 @@ impl ProviderApprovalTuple {
         source_identity: Option<ProviderSourceIdentity>,
     ) -> Result<Self, ProviderPolicyError> {
         let signed_manifest: Manifest =
-            serde_json::from_slice(signed_manifest_bytes).map_err(|_| {
+            serde_json::from_slice(manifest_input.bytes).map_err(|_| {
                 ProviderPolicyError::InvalidManifest(
                     "verified provider artifact has invalid manifest bytes".to_owned(),
                 )
@@ -282,7 +289,10 @@ impl ProviderApprovalTuple {
                 .validate()
                 .map_err(|error| ProviderPolicyError::InvalidManifest(error.to_string()))?;
         }
-        let manifest_digest = digest_hex(signed_manifest_bytes);
+        let manifest_digest = manifest_input
+            .digest
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| digest_hex(manifest_input.bytes));
         Ok(Self {
             provider_id: manifest.provider_id.clone(),
             archive_digest: package_digest.to_owned(),
@@ -325,6 +335,37 @@ impl ProviderApprovalTuple {
     pub fn source_identity(&self) -> Option<&ProviderSourceIdentity> {
         self.source_identity.as_ref()
     }
+}
+
+struct ManifestApprovalInput<'a> {
+    bytes: &'a [u8],
+    digest: Option<&'a str>,
+}
+
+fn neutral_source_manifest_bytes(manifest_bytes: &[u8]) -> Result<Vec<u8>, ProviderPolicyError> {
+    let mut manifest: serde_json::Value = serde_json::from_slice(manifest_bytes).map_err(|_| {
+        ProviderPolicyError::InvalidManifest(
+            "verified provider source has invalid manifest bytes".to_owned(),
+        )
+    })?;
+    let files = manifest
+        .get_mut("package")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|package| package.get_mut("files"))
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| {
+            ProviderPolicyError::InvalidManifest(
+                "verified provider source manifest has no package file table".to_owned(),
+            )
+        })?;
+    for file in files {
+        file.as_object_mut().map(|file| file.remove("mode"));
+    }
+    serde_json::to_vec(&manifest).map_err(|_| {
+        ProviderPolicyError::InvalidManifest(
+            "verified provider source manifest could not be normalized".to_owned(),
+        )
+    })
 }
 
 /// Explicit approval is an exact tuple match. Runtime declarations may then

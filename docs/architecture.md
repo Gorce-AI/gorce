@@ -32,7 +32,7 @@ snapshot. A future installed provider will cross the still-planned runtime
 boundary:
 
 ```text
-explicit Git source pin and install approval -> daemon-owned package host/broker -> provider process
+explicit Git source pin and approval -> daemon-global provider_data_root registry -> future package host/broker -> provider process
 ```
 
 The package host/broker is planned and is not present in this repository. The
@@ -80,10 +80,22 @@ contract checks. Provider parity fixtures continue to cross-check the shared
 path, URL, and validation semantics. These fixtures are proof evidence, not
 Git transport or provider-host implementation.
 
-The daemon-global provider root, persistence, staging/materialization, atomic
-commit, launch, process lifecycle, and daemon-owned OAuth described by the
-future host design are not implemented. No provider registry or install route
-exists either.
+ADR 0006 freezes the storage-only registry/install-root contract. The daemon
+global `provider_data_root` is independent of projects and invocations and has
+the fixed `FORMAT`, `LOCK`, and `registry.json` layout. The registry is a
+bounded canonical document whose entries are strict source approval records
+with content-derived `approval_id` values. It is atomically replaced under the
+root lock with generation checks, bounded temporary candidates, poisoning
+protection, and fail-closed recovery. Platform file/directory durability
+limits are reported explicitly; Windows does not claim Unix directory-fsync
+equivalence.
+
+The storage contract now has a narrow runtime implementation in the daemon and
+store-writer crates. There is no provider registry API or install route, Git
+transport, source materialization, executable launch, process lifecycle,
+protected credential persistence, or daemon-owned OAuth in this repository. The
+storage root contains approval metadata only; it does not contain a cloned
+source tree or executable.
 
 The current Phase 1 `verify_provider_archive(archive_bytes)` implementation
 still verifies the bounded signed ZIP, exact manifest bytes, regular-file ZIP
@@ -224,28 +236,29 @@ invalidation; that host integration is not implemented here.
 
 ## Runtime status and stop lines
 
-The ABI crate, pure core policy, and narrow resolver-snapshot source proof are
-implemented. No Git network transport or resolver, package registry,
-package host/broker, provider process supervisor, protected provider
-credential/source persistence, source materialization, executable launch, or
-daemon provider route exists in this repository. The provider ABI and source
-proof do not perform I/O, OAuth exchange, persistence, or secret storage. The
-mock conformance harness does perform bounded test-process reap and stderr
-capture solely to prove Phase 1 abnormal-exit behavior; that is not a
-production provider supervisor.
+The ABI crate, pure core policy, narrow resolver-snapshot source proof, and
+storage-only provider registry are implemented. No Git network transport or
+resolver, source materialization, executable launch, package host/broker,
+provider process supervisor, protected provider credential persistence,
+daemon provider/install route, or daemon-owned OAuth exists in this repository.
+The provider ABI and source proof do not perform I/O, OAuth exchange,
+persistence, or secret storage. The mock conformance harness does perform
+bounded test-process reap and stderr capture solely to prove Phase 1
+abnormal-exit behavior; that is not a production provider supervisor.
 
-ADR 0005 records the narrow Phase 2 source-proof boundary. Git transport,
-registry and install surfaces, durable persistence/recovery, staging and
-materialization, launch/process lifecycle, OAuth and credential state, scoped
-lease issuance, and authorization integration remain future host work. Phase 3
-is the first phase for authenticated daemon routes, SDK/client models,
-authoring surfaces, and public-boundary integration evidence. These stop lines
-do not claim a sandbox or an untrusted package mode.
+ADR 0005 records the narrow Phase 2 source-proof boundary and ADR 0006 records
+the storage-only daemon-global registry boundary. Git transport, source
+materialization, executable launch/process lifecycle, credentials/OAuth,
+provider host/broker integration, daemon install/provider routes, scoped lease
+issuance, and authorization integration remain future work. Phase 3 is the
+first phase for authenticated daemon routes, SDK/client models, authoring
+surfaces, and public-boundary integration evidence. These stop lines do not
+claim a sandbox or an untrusted package mode.
 
 ## Compatibility
 
 The provider ABI and daemon protocol are separate public compatibility surfaces.
 Changes require an explicit versioning decision, migration or recovery
-behavior, and tests. See `api-versioning.md`,
-`adr/0004-community-provider-abi-v1.md`, `adr/0005-phase-2-provider-install-and-host.md`,
-and `threat-model.md`.
+behavior, and tests. See `api-versioning.md`, `adr/0004-community-provider-abi-v1.md`,
+`adr/0005-phase-2-provider-install-and-host.md`,
+`adr/0006-phase-2-provider-registry-storage.md`, and `threat-model.md`.

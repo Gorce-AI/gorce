@@ -58,6 +58,64 @@ impl std::error::Error for SecurityError {
     }
 }
 
+#[derive(Debug)]
+pub enum ReplacementError {
+    BeforePublication(SecurityError),
+    PublicationAmbiguous(SecurityError),
+}
+
+impl fmt::Display for ReplacementError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BeforePublication(error) => {
+                write!(formatter, "replacement failed before publication: {error}")
+            }
+            Self::PublicationAmbiguous(error) => {
+                write!(formatter, "replacement publication is ambiguous: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ReplacementError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::BeforePublication(error) | Self::PublicationAmbiguous(error) => Some(error),
+        }
+    }
+}
+
+impl ReplacementError {
+    #[cfg(unix)]
+    fn into_security_error(self) -> SecurityError {
+        match self {
+            Self::BeforePublication(error) => error,
+            Self::PublicationAmbiguous(error) => {
+                SecurityError::Security(format!("replacement publication is ambiguous: {error}"))
+            }
+        }
+    }
+}
+
+impl From<SecurityError> for ReplacementError {
+    fn from(error: SecurityError) -> Self {
+        Self::BeforePublication(error)
+    }
+}
+
+impl From<io::Error> for ReplacementError {
+    fn from(error: io::Error) -> Self {
+        Self::BeforePublication(SecurityError::Io(error))
+    }
+}
+
+#[cfg(unix)]
+impl From<rustix::io::Errno> for ReplacementError {
+    fn from(error: rustix::io::Errno) -> Self {
+        Self::BeforePublication(SecurityError::from(error))
+    }
+}
+
 impl From<io::Error> for SecurityError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
@@ -140,7 +198,6 @@ impl SecureRuntime {
         name: &str,
         contents: &[u8],
     ) -> Result<DurabilityReport, SecurityError> {
-        validate_child_name(name)?;
         #[cfg(unix)]
         {
             let temporary_name = format!(
@@ -148,9 +205,8 @@ impl SecureRuntime {
                 std::process::id(),
                 TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
             );
-            validate_child_name(&temporary_name)?;
-            self.directory
-                .replace_private(name, &temporary_name, contents)
+            self.replace_private_validated(name, &temporary_name, contents, |_| Ok(()))
+                .map_err(ReplacementError::into_security_error)
         }
         #[cfg(windows)]
         {
@@ -164,6 +220,43 @@ impl SecureRuntime {
                     },
                 })
                 .map_err(map_windows_error)
+        }
+    }
+
+    pub fn replace_private_validated<F>(
+        &self,
+        name: &str,
+        temporary_name: &str,
+        contents: &[u8],
+        validate: F,
+    ) -> Result<DurabilityReport, ReplacementError>
+    where
+        F: FnOnce(&[u8]) -> Result<(), String>,
+    {
+        validate_child_name(name)?;
+        validate_child_name(temporary_name)?;
+        if name == temporary_name {
+            return Err(ReplacementError::BeforePublication(SecurityError::Invalid(
+                "replacement temporary name must differ from the target".to_owned(),
+            )));
+        }
+        #[cfg(unix)]
+        {
+            self.directory
+                .replace_private_validated(name, temporary_name, contents, validate)
+        }
+        #[cfg(windows)]
+        {
+            self.directory
+                .replace_private_validated(name, temporary_name, contents, validate)
+                .map(|report| DurabilityReport {
+                    directory_entry: match report.directory_entry {
+                        windows_backend::DirectoryDurability::BestEffort => {
+                            DirectoryDurability::BestEffort
+                        }
+                    },
+                })
+                .map_err(map_windows_replacement_error)
         }
     }
 
@@ -255,9 +348,30 @@ fn map_windows_error(error: windows_backend::SecurityError) -> SecurityError {
     SecurityError::Platform(error.to_string())
 }
 
+#[cfg(windows)]
+fn map_windows_security_error(error: windows_backend::SecurityError) -> SecurityError {
+    match error {
+        windows_backend::SecurityError::Io(error) => SecurityError::Io(error),
+        windows_backend::SecurityError::Invalid(message) => SecurityError::Invalid(message),
+        windows_backend::SecurityError::Security(message) => SecurityError::Security(message),
+    }
+}
+
+#[cfg(windows)]
+fn map_windows_replacement_error(error: windows_backend::ReplacementError) -> ReplacementError {
+    match error {
+        windows_backend::ReplacementError::BeforePublication(error) => {
+            ReplacementError::BeforePublication(map_windows_security_error(error))
+        }
+    }
+}
+
 #[cfg(unix)]
 mod unix {
-    use super::{Component, DirectoryDurability, DurabilityReport, File, Path, SecurityError};
+    use super::{
+        Component, DirectoryDurability, DurabilityReport, File, Path, ReplacementError,
+        SecurityError,
+    };
     use fs2::FileExt;
     use rustix::fd::AsFd;
     use rustix::fs::{self as rfs, AtFlags, Mode, OFlags, CWD};
@@ -265,7 +379,7 @@ mod unix {
     use std::collections::VecDeque;
     use std::ffi::{OsStr, OsString};
     use std::fs as std_fs;
-    use std::io::{self, Read, Write};
+    use std::io::{self, Read, Seek, SeekFrom, Write};
     #[cfg(target_os = "macos")]
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::PermissionsExt;
@@ -429,17 +543,22 @@ mod unix {
             Ok(Some(PrivateFile { file }))
         }
 
-        pub(super) fn replace_private(
+        pub(super) fn replace_private_validated<F>(
             &self,
             name: &str,
             temporary_name: &str,
             contents: &[u8],
-        ) -> Result<DurabilityReport, SecurityError> {
-            let result = (|| {
+            validate: F,
+        ) -> Result<DurabilityReport, ReplacementError>
+        where
+            F: FnOnce(&[u8]) -> Result<(), String>,
+        {
+            self.remove_private(temporary_name)?;
+            let result: Result<DurabilityReport, ReplacementError> = (|| {
                 let fd = rfs::openat(
                     self.directory.as_fd(),
                     Path::new(temporary_name),
-                    OFlags::WRONLY
+                    OFlags::RDWR
                         | OFlags::CREATE
                         | OFlags::EXCL
                         | OFlags::NOFOLLOW
@@ -451,24 +570,35 @@ mod unix {
                 validate_file(&file)?;
                 file.write_all(contents)?;
                 file.sync_all()?;
+                file.seek(SeekFrom::Start(0))?;
+                let mut candidate = Vec::with_capacity(contents.len());
+                std::io::Read::by_ref(&mut file)
+                    .take(contents.len() as u64 + 1)
+                    .read_to_end(&mut candidate)?;
+                if candidate.len() != contents.len() {
+                    return Err(ReplacementError::BeforePublication(SecurityError::Invalid(
+                        "replacement candidate changed while being read".to_owned(),
+                    )));
+                }
+                validate(&candidate).map_err(|error| {
+                    ReplacementError::BeforePublication(SecurityError::Invalid(error))
+                })?;
                 drop(file);
                 rfs::renameat(
                     self.directory.as_fd(),
                     Path::new(temporary_name),
                     self.directory.as_fd(),
                     Path::new(name),
-                )?;
-                rfs::fsync(self.directory.as_fd())?;
+                )
+                .map_err(|error| ReplacementError::BeforePublication(error.into()))?;
+                rfs::fsync(self.directory.as_fd())
+                    .map_err(|error| ReplacementError::PublicationAmbiguous(error.into()))?;
                 Ok(DurabilityReport {
                     directory_entry: DirectoryDurability::Durable,
                 })
             })();
             if result.is_err() {
-                let _ = rfs::unlinkat(
-                    self.directory.as_fd(),
-                    Path::new(temporary_name),
-                    AtFlags::empty(),
-                );
+                let _ = self.remove_private(temporary_name);
             }
             result
         }
@@ -604,9 +734,9 @@ mod unix {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::SecureRuntime;
+    use super::{ReplacementError, SecureRuntime, SecurityError};
     use std::fs;
-    use std::os::unix::fs::symlink;
+    use std::os::unix::fs::{symlink, PermissionsExt};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -667,6 +797,62 @@ mod tests {
 
         drop(runtime);
         fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn replacement_candidate_is_read_and_validated_before_rename() {
+        let root = temporary_directory("validated-replacement");
+        let runtime = SecureRuntime::open(&root).unwrap();
+        runtime.replace_private("registry", b"old").unwrap();
+
+        let validation =
+            runtime.replace_private_validated("registry", ".registry.tmp", b"new", |candidate| {
+                assert_eq!(candidate, b"new");
+                Err("reject before rename".to_owned())
+            });
+        assert!(matches!(
+            validation,
+            Err(ReplacementError::BeforePublication(SecurityError::Invalid(
+                _
+            )))
+        ));
+        assert_eq!(
+            runtime.read_private("registry").unwrap(),
+            Some(b"old".to_vec())
+        );
+        assert!(!root.join(".registry.tmp").exists());
+
+        drop(runtime);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn replacement_call_failure_after_validation_preserves_the_old_file() {
+        let root = temporary_directory("prepublication-io");
+        let runtime = SecureRuntime::open(&root).unwrap();
+        runtime.replace_private("registry", b"old").unwrap();
+        let mut validated = false;
+
+        let failure =
+            runtime.replace_private_validated("registry", ".registry.io", b"new", |candidate| {
+                assert_eq!(candidate, b"new");
+                validated = true;
+                fs::set_permissions(&root, fs::Permissions::from_mode(0o500)).unwrap();
+                Ok(())
+            });
+        assert!(matches!(
+            failure,
+            Err(ReplacementError::BeforePublication(_))
+        ));
+        assert!(validated);
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            runtime.read_private("registry").unwrap(),
+            Some(b"old".to_vec())
+        );
+
+        drop(runtime);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -34,6 +34,8 @@ pub use signing::{
     SignedProviderPackage, VerifiedProviderArchive, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES,
     MAX_ARCHIVE_UNCOMPRESSED_BYTES, PROVIDER_ARCHIVE_EXTENSION, RESERVED_ARCHIVE_ENTRIES,
 };
+#[cfg(feature = "test-fixtures")]
+pub use source::{test_verified_source_fixture, TestVerifiedSourceFixture};
 pub use source::{
     verify_provider_source, GitHashAlgorithm, PinnedGitSource, ResolverOwnedGitSnapshot,
     SourceVerificationError, VerifiedProviderSource, VerifiedSourceFile, MAX_SOURCE_FILES,

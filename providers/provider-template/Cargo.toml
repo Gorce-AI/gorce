@@ -1,0 +1,21 @@
+[package]
+name = "provider-template"
+description = "Copy-me starter gorce.provider/v1 package with API-key and OAuth PKCE auth and a web_search tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gorce-provider-abi = { path = "../../crates/gorce-provider-abi" }
+gorce-provider-runtime = { path = "../../crates/gorce-provider-runtime" }
+ed25519-dalek = { version = "2.1.1", default-features = false, features = ["std"] }
+serde_json = "1.0.114"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "provider-template"
+path = "src/main.rs"

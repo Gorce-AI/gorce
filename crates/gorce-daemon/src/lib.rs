@@ -34,7 +34,8 @@ use gorce_protocol::{
 };
 use gorce_store::{ProjectStoreReader, StoreError as ReaderStoreError};
 use gorce_store_writer::{
-    ProjectStoreWriter, StoreError as WriterStoreError, WriterState, STATE_DIRECTORY,
+    ProjectStoreWriter, ProviderRegistry, RegistryError, StoreError as WriterStoreError,
+    WriterState, STATE_DIRECTORY,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -186,6 +187,22 @@ fn writer_error(error: WriterStoreError) -> DaemonError {
     }
 }
 
+fn provider_registry_error(error: RegistryError) -> DaemonError {
+    let kind = match &error {
+        RegistryError::RecoveryNeeded(_)
+        | RegistryError::PublicationAmbiguous(_)
+        | RegistryError::Poisoned => StorageFailureKind::NeedsRecovery,
+        RegistryError::InvalidSource(_) | RegistryError::RegistryTooLarge => {
+            StorageFailureKind::InvalidArgument
+        }
+        _ => StorageFailureKind::Other,
+    };
+    DaemonError::Storage {
+        kind,
+        message: error.to_string(),
+    }
+}
+
 impl From<ReaderStoreError> for DaemonError {
     fn from(error: ReaderStoreError) -> Self {
         Self::Storage {
@@ -238,6 +255,8 @@ impl ProjectConfig {
 pub struct DaemonConfig {
     pub bind_addr: SocketAddr,
     pub runtime_dir: Option<PathBuf>,
+    #[cfg(test)]
+    provider_data_root_for_test: Option<PathBuf>,
     pub descriptor_name: String,
     pub token_name: String,
     pub projects: Vec<ProjectConfig>,
@@ -250,6 +269,8 @@ impl Default for DaemonConfig {
         Self {
             bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
             runtime_dir: None,
+            #[cfg(test)]
+            provider_data_root_for_test: None,
             descriptor_name: DEFAULT_DESCRIPTOR_NAME.to_owned(),
             token_name: DEFAULT_TOKEN_NAME.to_owned(),
             projects: Vec::new(),
@@ -274,6 +295,15 @@ impl DaemonConfig {
 
     pub fn with_runtime_dir(mut self, runtime_dir: impl Into<PathBuf>) -> Self {
         self.runtime_dir = Some(runtime_dir.into());
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_provider_data_root_for_test(
+        mut self,
+        provider_data_root: impl Into<PathBuf>,
+    ) -> Self {
+        self.provider_data_root_for_test = Some(provider_data_root.into());
         self
     }
 
@@ -406,6 +436,105 @@ pub fn platform_runtime_dir() -> Result<PathBuf> {
         }
     }
     Ok(std::env::temp_dir())
+}
+
+fn platform_provider_data_root() -> Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME").ok_or_else(|| {
+            DaemonError::InvalidConfiguration(
+                "cannot determine the per-user home directory for provider data".to_owned(),
+            )
+        })?;
+        return Ok(PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("gorce"));
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(path) = std::env::var_os("XDG_DATA_HOME") {
+            let path = PathBuf::from(path);
+            if path.is_absolute() {
+                return Ok(path.join("gorce"));
+            }
+        }
+        let home = std::env::var_os("HOME").ok_or_else(|| {
+            DaemonError::InvalidConfiguration(
+                "cannot determine the per-user home directory for provider data".to_owned(),
+            )
+        })?;
+        return Ok(PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("gorce"));
+    }
+    #[cfg(windows)]
+    {
+        let local_app_data = std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
+            DaemonError::InvalidConfiguration(
+                "cannot determine LOCALAPPDATA for provider data".to_owned(),
+            )
+        })?;
+        return Ok(PathBuf::from(local_app_data).join("GorceProviderData"));
+    }
+    #[allow(unreachable_code)]
+    Err(DaemonError::InvalidConfiguration(
+        "unsupported platform provider data root".to_owned(),
+    ))
+}
+
+fn validate_provider_data_root_candidate(runtime_dir: &Path, provider_root: &Path) -> Result<()> {
+    if provider_root
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(DaemonError::InvalidConfiguration(
+            "provider data root must not contain parent traversal".to_owned(),
+        ));
+    }
+    let runtime = canonicalize_candidate(runtime_dir)?;
+    let temp = canonicalize_candidate(&std::env::temp_dir())?;
+    let provider = canonicalize_candidate(provider_root)?;
+    if provider == runtime || provider.starts_with(&runtime) {
+        return Err(DaemonError::InvalidConfiguration(
+            "provider data root must be distinct from and outside runtime_dir".to_owned(),
+        ));
+    }
+    if provider == temp || provider.starts_with(&temp) {
+        return Err(DaemonError::InvalidConfiguration(
+            "provider data root must not be inside the temporary directory".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn canonicalize_candidate(path: &Path) -> Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut existing = absolute.clone();
+    let mut suffix = Vec::new();
+    while !existing.exists() {
+        let name = existing.file_name().ok_or_else(|| {
+            DaemonError::InvalidConfiguration(
+                "provider data root has no existing canonical parent".to_owned(),
+            )
+        })?;
+        suffix.push(name.to_owned());
+        if !existing.pop() {
+            return Err(DaemonError::InvalidConfiguration(
+                "provider data root has no existing canonical parent".to_owned(),
+            ));
+        }
+    }
+    let mut canonical = fs::canonicalize(existing).map_err(DaemonError::from)?;
+    for name in suffix.iter().rev() {
+        canonical.push(name);
+    }
+    Ok(canonical)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -963,6 +1092,7 @@ impl ProjectRegistry {
 
 struct DaemonState {
     registry: Arc<ProjectRegistry>,
+    _provider_registry: Arc<ProviderRegistry>,
     broadcaster: EventBroadcaster,
     token: String,
     local_principal_id: PrincipalId,
@@ -1461,6 +1591,16 @@ impl Daemon {
         let instance_lock = runtime
             .lock(DEFAULT_INSTANCE_LOCK_NAME)
             .map_err(DaemonError::from)?;
+        #[cfg(test)]
+        let provider_data_root = match &config.provider_data_root_for_test {
+            Some(path) => path.clone(),
+            None => platform_provider_data_root()?,
+        };
+        #[cfg(not(test))]
+        let provider_data_root = platform_provider_data_root()?;
+        validate_provider_data_root_candidate(runtime.path(), &provider_data_root)?;
+        let provider_registry =
+            Arc::new(ProviderRegistry::open(&provider_data_root).map_err(provider_registry_error)?);
         let local_principal_id = load_or_create_daemon_identity(&runtime, &config.projects)?;
         let registry = Arc::new(ProjectRegistry::open(&config.projects)?);
         for project_id in registry.project_ids() {
@@ -1490,6 +1630,7 @@ impl Daemon {
             instance_lock: Some(instance_lock),
             state: Arc::new(DaemonState {
                 registry,
+                _provider_registry: provider_registry,
                 broadcaster: EventBroadcaster::new(
                     config.subscriber_queue_capacity,
                     config.event_history_capacity,
@@ -2649,14 +2790,25 @@ mod tests {
     use std::process::Command;
     use tower::util::ServiceExt;
 
-    fn test_state() -> Arc<DaemonState> {
-        Arc::new(DaemonState {
+    fn test_state() -> (Arc<DaemonState>, PathBuf) {
+        let provider_data_root = std::env::current_dir()
+            .unwrap()
+            .join(format!(".gorce-daemon-provider-test-{}", Uuid::new_v4()));
+        let state = Arc::new(DaemonState {
             registry: Arc::new(ProjectRegistry::open(&[]).unwrap()),
+            _provider_registry: Arc::new(ProviderRegistry::open(&provider_data_root).unwrap()),
             broadcaster: EventBroadcaster::new(1024, 4096),
             token: "test-token".to_owned(),
             local_principal_id: Uuid::now_v7(),
             bound_address: OnceCell::new(),
-        })
+        });
+        (state, provider_data_root)
+    }
+
+    fn test_provider_data_root() -> PathBuf {
+        std::env::current_dir()
+            .unwrap()
+            .join(format!(".gorce-daemon-provider-{}", Uuid::new_v4()))
     }
 
     fn public_event_batch(event_type: &str, data: Value) -> EventBatch {
@@ -2701,6 +2853,124 @@ mod tests {
         ));
         let config = DaemonConfig::default().with_queue_limits(MAX_CLIENT_QUEUE_BYTES + 1, 1);
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn provider_data_root_uses_durable_default_and_is_separate_from_runtime() {
+        let default_root = platform_provider_data_root().unwrap();
+        #[cfg(windows)]
+        assert_eq!(
+            default_root.file_name().and_then(|name| name.to_str()),
+            Some("GorceProviderData")
+        );
+        #[cfg(not(windows))]
+        assert_eq!(
+            default_root.file_name().and_then(|name| name.to_str()),
+            Some("gorce")
+        );
+
+        let runtime = std::env::temp_dir().join(format!("gorce-runtime-{}", Uuid::new_v4()));
+        let provider_root = std::env::current_dir()
+            .unwrap()
+            .join(format!(".gorce-provider-data-{}", Uuid::new_v4()));
+        let daemon = Daemon::new(
+            DaemonConfig::default()
+                .with_runtime_dir(&runtime)
+                .with_provider_data_root_for_test(&provider_root),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::canonicalize(daemon.state._provider_registry.root()).unwrap(),
+            fs::canonicalize(&provider_root).unwrap()
+        );
+        drop(daemon);
+        let same = DaemonConfig::default()
+            .with_runtime_dir(&runtime)
+            .with_provider_data_root_for_test(&runtime);
+        let same_result = Daemon::new(same);
+        assert!(matches!(
+            same_result,
+            Err(DaemonError::InvalidConfiguration(_))
+        ));
+        let temp_provider_root =
+            std::env::temp_dir().join(format!("gorce-provider-data-{}", Uuid::new_v4()));
+        assert!(!temp_provider_root.exists());
+        let temp_result = Daemon::new(
+            DaemonConfig::default()
+                .with_runtime_dir(&runtime)
+                .with_provider_data_root_for_test(&temp_provider_root),
+        );
+        assert!(matches!(
+            temp_result,
+            Err(DaemonError::InvalidConfiguration(_))
+        ));
+        assert!(!temp_provider_root.exists());
+        let descendant = runtime.join("provider-data");
+        let descendant_result = Daemon::new(
+            DaemonConfig::default()
+                .with_runtime_dir(&runtime)
+                .with_provider_data_root_for_test(&descendant),
+        );
+        assert!(matches!(
+            descendant_result,
+            Err(DaemonError::InvalidConfiguration(_))
+        ));
+        assert!(!descendant.exists());
+        let parent_result = Daemon::new(
+            DaemonConfig::default()
+                .with_runtime_dir(&runtime)
+                .with_provider_data_root_for_test("../provider-data"),
+        );
+        assert!(matches!(
+            parent_result,
+            Err(DaemonError::InvalidConfiguration(_))
+        ));
+        let _ = fs::remove_dir_all(runtime);
+        let _ = fs::remove_dir_all(provider_root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_defaults_construct_distinct_runtime_and_provider_roots() {
+        struct LocalAppDataGuard(Option<std::ffi::OsString>);
+
+        impl Drop for LocalAppDataGuard {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("LOCALAPPDATA", value),
+                    None => std::env::remove_var("LOCALAPPDATA"),
+                }
+            }
+        }
+
+        let base = std::env::current_dir()
+            .unwrap()
+            .join(format!(".gorce-windows-default-{}", Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let previous = LocalAppDataGuard(std::env::var_os("LOCALAPPDATA"));
+        std::env::set_var("LOCALAPPDATA", &base);
+
+        let runtime_root = platform_runtime_dir().unwrap().join("gorce");
+        let provider_root = platform_provider_data_root().unwrap();
+        assert_ne!(
+            runtime_root.to_string_lossy().to_ascii_lowercase(),
+            provider_root.to_string_lossy().to_ascii_lowercase()
+        );
+
+        let daemon = Daemon::new(DaemonConfig::default()).unwrap();
+        assert_eq!(
+            fs::canonicalize(daemon.runtime.path()).unwrap(),
+            fs::canonicalize(&runtime_root).unwrap()
+        );
+        assert_eq!(
+            fs::canonicalize(daemon.state._provider_registry.root()).unwrap(),
+            fs::canonicalize(&provider_root).unwrap()
+        );
+        drop(daemon);
+        fs::remove_dir_all(runtime_root).unwrap();
+        fs::remove_dir_all(provider_root).unwrap();
+        drop(previous);
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
@@ -2760,7 +3030,13 @@ mod tests {
     fn concurrent_fresh_process_first_start_has_one_owner() {
         if std::env::var_os("GORCE_FIRST_START_HELPER").is_some() {
             let runtime = PathBuf::from(std::env::var_os("GORCE_FIRST_START_RUNTIME").unwrap());
-            let result = Daemon::new(DaemonConfig::default().with_runtime_dir(runtime));
+            let provider_root =
+                PathBuf::from(std::env::var_os("GORCE_FIRST_START_PROVIDER").unwrap());
+            let result = Daemon::new(
+                DaemonConfig::default()
+                    .with_runtime_dir(runtime)
+                    .with_provider_data_root_for_test(provider_root),
+            );
             if result.is_ok() {
                 std::thread::sleep(Duration::from_millis(300));
                 std::process::exit(0);
@@ -2768,6 +3044,7 @@ mod tests {
             std::process::exit(1);
         }
         let runtime = std::env::temp_dir().join(format!("gorce-daemon-first-{}", Uuid::new_v4()));
+        let provider_root = test_provider_data_root();
         let executable = std::env::current_exe().unwrap();
         let mut children = Vec::new();
         for _ in 0..2 {
@@ -2778,6 +3055,7 @@ mod tests {
                     .arg("--nocapture")
                     .env("GORCE_FIRST_START_HELPER", "1")
                     .env("GORCE_FIRST_START_RUNTIME", &runtime)
+                    .env("GORCE_FIRST_START_PROVIDER", &provider_root)
                     .spawn()
                     .unwrap(),
             );
@@ -2788,6 +3066,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(statuses.iter().filter(|success| **success).count(), 1);
         fs::remove_dir_all(runtime).unwrap();
+        fs::remove_dir_all(provider_root).unwrap();
     }
 
     #[test]
@@ -2887,11 +3166,13 @@ mod tests {
         let root = std::env::temp_dir().join(format!("gorce-daemon-live-{}", Uuid::new_v4()));
         let runtime =
             std::env::temp_dir().join(format!("gorce-daemon-live-runtime-{}", Uuid::new_v4()));
+        let provider_root = test_provider_data_root();
         fs::create_dir_all(&root).unwrap();
         let project_id = Uuid::new_v4();
         let daemon = Daemon::new(
             DaemonConfig::new(vec![ProjectConfig::new(project_id, &root)])
-                .with_runtime_dir(&runtime),
+                .with_runtime_dir(&runtime)
+                .with_provider_data_root_for_test(&provider_root),
         )
         .unwrap();
         let project = daemon.state.registry.project(project_id).unwrap();
@@ -2940,6 +3221,7 @@ mod tests {
         drop(daemon);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(runtime).unwrap();
+        fs::remove_dir_all(provider_root).unwrap();
     }
 
     #[tokio::test]
@@ -2956,7 +3238,7 @@ mod tests {
 
     #[tokio::test]
     async fn router_returns_typed_auth_404_and_405_errors() {
-        let state = test_state();
+        let (state, provider_data_root) = test_state();
         let router = app(state);
         let unauthorized = router
             .clone()
@@ -3042,11 +3324,13 @@ mod tests {
             .unwrap();
         let error: CommandError = serde_json::from_slice(&body).unwrap();
         assert_eq!(error.code, CommandErrorCode::MissingIdempotencyKey);
+        fs::remove_dir_all(provider_data_root).unwrap();
     }
 
     #[tokio::test]
     async fn command_route_rejects_incompatible_protocol_before_dispatch() {
-        let router = app(test_state());
+        let (state, provider_data_root) = test_state();
+        let router = app(state);
         let response = router
             .oneshot(
                 Request::builder()
@@ -3066,6 +3350,7 @@ mod tests {
         let error: ApiError = serde_json::from_slice(&body).unwrap();
         assert_eq!(error.code, ErrorCode::PreconditionFailed);
         assert_eq!(error.message, "client protocol version is incompatible");
+        fs::remove_dir_all(provider_data_root).unwrap();
     }
 
     #[test]
@@ -3098,16 +3383,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn ambiguous_provider_publication_maps_to_needs_recovery() {
+        let error = provider_registry_error(RegistryError::PublicationAmbiguous(
+            "replacement result is indeterminate".to_owned(),
+        ));
+        assert!(matches!(
+            error,
+            DaemonError::Storage {
+                kind: StorageFailureKind::NeedsRecovery,
+                ..
+            }
+        ));
+    }
+
     #[tokio::test]
     async fn authority_commands_project_and_replay_durably() {
         let root = std::env::temp_dir().join(format!("gorce-authority-{}", Uuid::new_v4()));
         let runtime =
             std::env::temp_dir().join(format!("gorce-authority-runtime-{}", Uuid::new_v4()));
+        let provider_root = test_provider_data_root();
         fs::create_dir_all(&root).unwrap();
         let project_id = Uuid::new_v4();
         let daemon = Daemon::new(
             DaemonConfig::new(vec![ProjectConfig::new(project_id, &root)])
-                .with_runtime_dir(&runtime),
+                .with_runtime_dir(&runtime)
+                .with_provider_data_root_for_test(&provider_root),
         )
         .unwrap();
         let service = ProjectCommandService::new(daemon.state.clone());
@@ -3188,6 +3489,7 @@ mod tests {
         drop(daemon);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(runtime).unwrap();
+        fs::remove_dir_all(provider_root).unwrap();
     }
 
     #[test]
@@ -3205,10 +3507,12 @@ mod tests {
     fn daemon_identity_is_stable_and_bootstraps_only_empty_authority_state() {
         let root = std::env::temp_dir().join(format!("gorce-daemon-identity-{}", Uuid::new_v4()));
         let runtime = std::env::temp_dir().join(format!("gorce-daemon-runtime-{}", Uuid::new_v4()));
+        let provider_root = test_provider_data_root();
         fs::create_dir_all(&root).unwrap();
         let project_id = Uuid::new_v4();
         let config = DaemonConfig::new(vec![ProjectConfig::new(project_id, &root)])
-            .with_runtime_dir(&runtime);
+            .with_runtime_dir(&runtime)
+            .with_provider_data_root_for_test(&provider_root);
         let first = Daemon::new(config.clone()).unwrap();
         let principal_id = first.state.local_principal_id;
         let project = first.state.registry.project(project_id).unwrap();
@@ -3246,5 +3550,6 @@ mod tests {
         assert!(Daemon::new(config.clone()).is_err());
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(runtime).unwrap();
+        fs::remove_dir_all(provider_root).unwrap();
     }
 }

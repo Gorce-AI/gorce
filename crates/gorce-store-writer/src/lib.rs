@@ -1,5 +1,13 @@
 #![forbid(unsafe_code)]
 
+mod provider_registry;
+
+pub use provider_registry::{
+    ProviderRegistry, RegistryError, RegistryRegistration, MAX_PROVIDER_REGISTRY_BYTES,
+    MAX_PROVIDER_REGISTRY_RECORDS, PROVIDER_DATA_FORMAT_VERSION, PROVIDER_REGISTRY_FILE,
+    PROVIDER_REGISTRY_LOCK_FILE,
+};
+
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::fmt;

@@ -700,6 +700,215 @@ fn validate_git_url(value: &str) -> Result<(), SourceVerificationError> {
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-fixtures"))]
+fn snapshot_from_fixture_value(
+    value: &Value,
+) -> Result<ResolverOwnedGitSnapshot, SourceVerificationError> {
+    let source_value = value
+        .get("source")
+        .and_then(Value::as_object)
+        .ok_or_else(|| SourceVerificationError::new("source", "must be an object"))?;
+    if source_value.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "canonical_git_url" | "commit_hash_algorithm" | "resolved_commit"
+        )
+    }) {
+        return Err(SourceVerificationError::new(
+            "source",
+            "contains an unsupported moving-reference field",
+        ));
+    }
+    let source = PinnedGitSource::new(
+        source_value
+            .get("canonical_git_url")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                SourceVerificationError::new("source.canonical_git_url", "must be text")
+            })?,
+        match source_value
+            .get("commit_hash_algorithm")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                SourceVerificationError::new("source.commit_hash_algorithm", "must be text")
+            })? {
+            "sha1" => GitHashAlgorithm::Sha1,
+            "sha256" => GitHashAlgorithm::Sha256,
+            _ => {
+                return Err(SourceVerificationError::new(
+                    "source.commit_hash_algorithm",
+                    "unsupported hash algorithm",
+                ))
+            }
+        },
+        source_value
+            .get("resolved_commit")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                SourceVerificationError::new("source.resolved_commit", "must be text")
+            })?,
+    )?;
+    let files = value
+        .get("files")
+        .and_then(Value::as_array)
+        .ok_or_else(|| SourceVerificationError::new("files", "must be an array"))?
+        .iter()
+        .map(|file| {
+            let kind = match file.get("kind").and_then(Value::as_str) {
+                Some("regular_file") => SourceEntryKind::RegularFile,
+                Some("symlink") => SourceEntryKind::Symlink,
+                Some("gitlink") => SourceEntryKind::Gitlink,
+                Some("directory") => SourceEntryKind::Directory,
+                Some("special") => SourceEntryKind::Special,
+                _ => {
+                    return Err(SourceVerificationError::new(
+                        "files.kind",
+                        "unsupported source entry kind",
+                    ))
+                }
+            };
+            let content = file
+                .get("content")
+                .and_then(Value::as_array)
+                .ok_or_else(|| SourceVerificationError::new("files.content", "must be bytes"))?
+                .iter()
+                .map(|byte| {
+                    byte.as_u64()
+                        .and_then(|byte| u8::try_from(byte).ok())
+                        .ok_or_else(|| {
+                            SourceVerificationError::new("files.content", "must contain bytes")
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mode = match file.get("mode") {
+                Some(Value::Null) | None => None,
+                Some(mode) => Some(
+                    mode.as_u64()
+                        .and_then(|mode| u32::try_from(mode).ok())
+                        .ok_or_else(|| {
+                            SourceVerificationError::new("files.mode", "must be a Unix mode")
+                        })?,
+                ),
+            };
+            Ok(ResolverSourceEntry::new(
+                file.get("path")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| SourceVerificationError::new("files.path", "must be text"))?,
+                kind,
+                mode,
+                content,
+            ))
+        })
+        .collect::<Result<Vec<_>, SourceVerificationError>>()?;
+    Ok(ResolverOwnedGitSnapshot::from_resolver(
+        source,
+        value["source_content_digest"]
+            .as_str()
+            .ok_or_else(|| SourceVerificationError::new("source_content_digest", "must be text"))?,
+        value["manifest_mode"]
+            .as_u64()
+            .and_then(|mode| u32::try_from(mode).ok())
+            .ok_or_else(|| SourceVerificationError::new("manifest_mode", "must be a Unix mode"))?,
+        value["manifest"]
+            .as_str()
+            .ok_or_else(|| SourceVerificationError::new("manifest", "must be text"))?
+            .as_bytes()
+            .to_vec(),
+        files,
+    ))
+}
+
+#[cfg(feature = "test-fixtures")]
+#[derive(Debug, Clone, Copy)]
+pub enum TestVerifiedSourceFixture {
+    Base,
+    Replacement,
+    LargeSchema,
+}
+
+#[cfg(feature = "test-fixtures")]
+pub fn test_verified_source_fixture(
+    fixture: TestVerifiedSourceFixture,
+) -> Result<VerifiedProviderSource, SourceVerificationError> {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../../api/provider-abi/v1/source-fixtures.json"
+    ))
+    .map_err(|error| SourceVerificationError::new("fixture", error.to_string()))?;
+    let mut value = fixtures["positive"][0]["value"].clone();
+    match fixture {
+        TestVerifiedSourceFixture::Base => {}
+        TestVerifiedSourceFixture::Replacement => {
+            value["source"]["resolved_commit"] = Value::String("b".repeat(40));
+            let bytes = b"replacement executable";
+            value["files"][0]["content"] =
+                Value::Array(bytes.iter().copied().map(Value::from).collect());
+            value["files"][0]["size"] = Value::from(bytes.len() as u64);
+            value["files"][0]["sha256"] = Value::String(digest_hex(bytes));
+            let mut manifest: Value =
+                serde_json::from_str(value["manifest"].as_str().ok_or_else(|| {
+                    SourceVerificationError::new("fixture.manifest", "must be text")
+                })?)
+                .map_err(|error| {
+                    SourceVerificationError::new("fixture.manifest", error.to_string())
+                })?;
+            manifest["package"]["files"][0]["size"] = Value::from(bytes.len() as u64);
+            manifest["package"]["files"][0]["sha256"] = Value::String(digest_hex(bytes));
+            manifest["package"]["executable"]["sha256"] = Value::String(digest_hex(bytes));
+            value["manifest"] =
+                Value::String(serde_json::to_string(&manifest).map_err(|error| {
+                    SourceVerificationError::new("fixture.manifest", error.to_string())
+                })?);
+        }
+        TestVerifiedSourceFixture::LargeSchema => {
+            let mut properties = serde_json::Map::new();
+            for property in 0..32 {
+                let values = (0..20)
+                    .map(|value| {
+                        Value::String(format!(
+                            "option-{property:02}-{value:02}-{}",
+                            "x".repeat(20)
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                properties.insert(
+                    format!("field-{property:02}"),
+                    serde_json::json!({"type": "string", "enum": values}),
+                );
+            }
+            let mut manifest: Value =
+                serde_json::from_str(value["manifest"].as_str().ok_or_else(|| {
+                    SourceVerificationError::new("fixture.manifest", "must be text")
+                })?)
+                .map_err(|error| {
+                    SourceVerificationError::new("fixture.manifest", error.to_string())
+                })?;
+            manifest["tools"][0]["input_schema"] = serde_json::json!({
+                "type": "object",
+                "properties": properties,
+                "additionalProperties": false
+            });
+            value["manifest"] =
+                Value::String(serde_json::to_string(&manifest).map_err(|error| {
+                    SourceVerificationError::new("fixture.manifest", error.to_string())
+                })?);
+        }
+    }
+    let snapshot = snapshot_from_fixture_value(&value)?;
+    let snapshot = if !matches!(fixture, TestVerifiedSourceFixture::Base) {
+        let digest = compute_source_content_digest(&snapshot);
+        ResolverOwnedGitSnapshot::from_resolver(
+            snapshot.source().clone(),
+            digest,
+            snapshot.manifest_unix_mode(),
+            snapshot.manifest_bytes().to_vec(),
+            snapshot.files().to_vec(),
+        )
+    } else {
+        snapshot
+    };
+    verify_provider_source(&snapshot)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -904,125 +1113,6 @@ mod tests {
                 &mut cursor[*part]
             };
         }
-    }
-
-    fn snapshot_from_fixture_value(
-        value: &Value,
-    ) -> Result<ResolverOwnedGitSnapshot, SourceVerificationError> {
-        let source_value = value
-            .get("source")
-            .and_then(Value::as_object)
-            .ok_or_else(|| SourceVerificationError::new("source", "must be an object"))?;
-        if source_value.keys().any(|key| {
-            !matches!(
-                key.as_str(),
-                "canonical_git_url" | "commit_hash_algorithm" | "resolved_commit"
-            )
-        }) {
-            return Err(SourceVerificationError::new(
-                "source",
-                "contains an unsupported moving-reference field",
-            ));
-        }
-        let source = PinnedGitSource::new(
-            source_value
-                .get("canonical_git_url")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    SourceVerificationError::new("source.canonical_git_url", "must be text")
-                })?,
-            match source_value
-                .get("commit_hash_algorithm")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    SourceVerificationError::new("source.commit_hash_algorithm", "must be text")
-                })? {
-                "sha1" => GitHashAlgorithm::Sha1,
-                "sha256" => GitHashAlgorithm::Sha256,
-                _ => {
-                    return Err(SourceVerificationError::new(
-                        "source.commit_hash_algorithm",
-                        "unsupported hash algorithm",
-                    ))
-                }
-            },
-            source_value
-                .get("resolved_commit")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    SourceVerificationError::new("source.resolved_commit", "must be text")
-                })?,
-        )?;
-        let files = value
-            .get("files")
-            .and_then(Value::as_array)
-            .ok_or_else(|| SourceVerificationError::new("files", "must be an array"))?
-            .iter()
-            .map(|file| {
-                let kind = match file.get("kind").and_then(Value::as_str) {
-                    Some("regular_file") => SourceEntryKind::RegularFile,
-                    Some("symlink") => SourceEntryKind::Symlink,
-                    Some("gitlink") => SourceEntryKind::Gitlink,
-                    Some("directory") => SourceEntryKind::Directory,
-                    Some("special") => SourceEntryKind::Special,
-                    _ => {
-                        return Err(SourceVerificationError::new(
-                            "files.kind",
-                            "unsupported source entry kind",
-                        ))
-                    }
-                };
-                let content = file
-                    .get("content")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| SourceVerificationError::new("files.content", "must be bytes"))?
-                    .iter()
-                    .map(|byte| {
-                        byte.as_u64()
-                            .and_then(|byte| u8::try_from(byte).ok())
-                            .ok_or_else(|| {
-                                SourceVerificationError::new("files.content", "must contain bytes")
-                            })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let mode = match file.get("mode") {
-                    Some(Value::Null) | None => None,
-                    Some(mode) => Some(
-                        mode.as_u64()
-                            .and_then(|mode| u32::try_from(mode).ok())
-                            .ok_or_else(|| {
-                                SourceVerificationError::new("files.mode", "must be a Unix mode")
-                            })?,
-                    ),
-                };
-                Ok(ResolverSourceEntry::new(
-                    file.get("path").and_then(Value::as_str).ok_or_else(|| {
-                        SourceVerificationError::new("files.path", "must be text")
-                    })?,
-                    kind,
-                    mode,
-                    content,
-                ))
-            })
-            .collect::<Result<Vec<_>, SourceVerificationError>>()?;
-        Ok(ResolverOwnedGitSnapshot::from_resolver(
-            source,
-            value["source_content_digest"].as_str().ok_or_else(|| {
-                SourceVerificationError::new("source_content_digest", "must be text")
-            })?,
-            value["manifest_mode"]
-                .as_u64()
-                .and_then(|mode| u32::try_from(mode).ok())
-                .ok_or_else(|| {
-                    SourceVerificationError::new("manifest_mode", "must be a Unix mode")
-                })?,
-            value["manifest"]
-                .as_str()
-                .ok_or_else(|| SourceVerificationError::new("manifest", "must be text"))?
-                .as_bytes()
-                .to_vec(),
-            files,
-        ))
     }
 
     #[test]
