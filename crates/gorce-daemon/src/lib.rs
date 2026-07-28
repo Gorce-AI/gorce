@@ -2863,7 +2863,9 @@ mod tests {
     #[test]
     fn provider_data_root_uses_durable_default_and_is_separate_from_runtime() {
         #[cfg(windows)]
-        let _default_root_test_lock = WINDOWS_DEFAULT_ROOT_TEST_LOCK.lock().unwrap();
+        let _default_root_test_lock = WINDOWS_DEFAULT_ROOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let default_root = platform_provider_data_root().unwrap();
         #[cfg(windows)]
         assert_eq!(
@@ -2939,7 +2941,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_native_defaults_construct_distinct_runtime_and_provider_roots() {
-        let _default_root_test_lock = WINDOWS_DEFAULT_ROOT_TEST_LOCK.lock().unwrap();
+        let _default_root_test_lock = WINDOWS_DEFAULT_ROOT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         struct LocalAppDataGuard(Option<std::ffi::OsString>);
 
         impl Drop for LocalAppDataGuard {
