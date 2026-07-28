@@ -173,7 +173,10 @@ fn verify_manifest(
     let manifest: Manifest = serde_json::from_slice(manifest_bytes)
         .map_err(|error| SignatureError::Json(error.to_string()))?;
     manifest.validate().map_err(SignatureError::Manifest)?;
-    if manifest.publisher.fingerprint != fingerprint_hex(&public_key) {
+    let Some(publisher) = manifest.publisher.as_ref() else {
+        return Err(SignatureError::InvalidSignature);
+    };
+    if publisher.fingerprint != fingerprint_hex(&public_key) {
         return Err(SignatureError::InvalidSignature);
     }
     Ok(manifest)
@@ -348,10 +351,10 @@ mod tests {
                 provider_id: "fixture-provider".to_owned(),
                 display_name: "Fixture provider".to_owned(),
                 version: "1.0.0".to_owned(),
-                publisher: PackagePublisher {
+                publisher: Some(PackagePublisher {
                     name: "Fixture publisher".to_owned(),
                     fingerprint: fingerprint_hex(&key.verifying_key().to_bytes()),
-                },
+                }),
                 package: ManifestPackage {
                     files: vec![PackageFile {
                         path: "bin/provider".to_owned(),
@@ -445,6 +448,14 @@ mod tests {
                 "non-regular mode unexpectedly accepted: {mode:o}"
             );
         }
+    }
+
+    #[test]
+    fn signed_manifest_rejects_source_only_file_mode_fields() {
+        let (manifest, _) = fixture_manifest();
+        let mut value = serde_json::to_value(manifest).unwrap();
+        value["package"]["files"][0]["mode"] = json!(0o100644_u32);
+        assert!(serde_json::from_value::<Manifest>(value).is_err());
     }
 
     #[test]

@@ -24,7 +24,8 @@ pub struct Manifest {
     pub provider_id: String,
     pub display_name: String,
     pub version: String,
-    pub publisher: PackagePublisher,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publisher: Option<PackagePublisher>,
     pub package: ManifestPackage,
     pub auth_methods: Vec<AuthMethod>,
     pub capabilities: Capabilities,
@@ -261,14 +262,28 @@ pub enum SideEffect {
 
 impl Manifest {
     pub fn validate(&self) -> ValidationResult<()> {
+        self.validate_common()?;
+        let publisher = self.publisher.as_ref().ok_or_else(|| {
+            ValidationError::new("publisher", "signed provider manifests require a publisher")
+        })?;
+        validate_text(&publisher.name, "publisher.name", MAX_STRING_BYTES)?;
+        validate_hex(&publisher.fingerprint, 32, "publisher.fingerprint")?;
+        Ok(())
+    }
+
+    /// Validate the neutral provider contract used by resolver-owned source
+    /// manifests. Source authority has no publisher or detached signature.
+    pub fn validate_source(&self) -> ValidationResult<()> {
+        self.validate_common()
+    }
+
+    fn validate_common(&self) -> ValidationResult<()> {
         if self.format != ABI_FORMAT {
             return Err(ValidationError::new("format", "unsupported provider ABI"));
         }
         validate_identifier(&self.provider_id, "provider_id", 64)?;
         validate_text(&self.display_name, "display_name", MAX_STRING_BYTES)?;
         validate_version(&self.version)?;
-        validate_text(&self.publisher.name, "publisher.name", MAX_STRING_BYTES)?;
-        validate_hex(&self.publisher.fingerprint, 32, "publisher.fingerprint")?;
         self.package.validate()?;
 
         if self.auth_methods.is_empty() || self.auth_methods.len() > MAX_AUTH_METHODS {

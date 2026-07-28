@@ -1,130 +1,180 @@
-# ADR 0005: Bounded Phase 2 provider installation and hosting
+# ADR 0005: Narrow Phase 2 pinned-Git provider source proof
 
-- Status: Accepted target architecture
+- Status: Accepted; narrow source-proof slice implemented
 - Date: 2026-07-28
-- Scope: Phase 2 provider-install V1 and daemon-owned provider host
+- Scope: Phase 2 provider source identity and verification only
 
 ## Context
 
 Phase 1 freezes `gorce.provider/v1`, pure `gorce-core::provider` approval and
 lease policy, the signed `.gorce-provider` archive verifier, schemas, and the
-deterministic mock conformance package. It deliberately does not implement a
-daemon registry, package host, protected credential persistence, or OAuth
-exchange.
+deterministic mock conformance package. Phase 1 deliberately does not provide
+provider runtime integration.
 
-Phase 2 needs a bounded installation and execution authority without silently
-turning a community package into an official or sandboxed package. The Oracle
-preflight therefore requires an explicit user install decision, an immutable
-source pin, durable daemon ownership, and a host-mediated OAuth lifecycle. This
-ADR freezes that target and supersedes the Phase 1 signed-archive launch sketch
-for the Phase 2 provider-install V1 path.
+The implemented Phase 2 slice defines a bounded proof for an explicitly pinned
+Git source. It proves the identity and contents of one snapshot supplied by a
+resolver, without treating source proof as a registry, installer, host, or
+sandbox. The proof is intentionally unsigned: it does not establish a
+publisher or official identity. The source schema, neutral source-manifest
+schema, shared source fixtures, and provider parity fixtures are part of the
+Rust/Python contract evidence for this boundary.
 
 ## Decision
 
-### 1. Explicit unsigned Git source installation
+### 1. Pinned Git source identity
 
-The only V1 provider source is an explicitly user-initiated install from a
-canonical, pinned Git URL. The daemon resolves that URL to an immutable full
-commit and computes a content digest over the exact source snapshot it will
-materialize. The durable install record contains, at minimum:
+`PinnedGitSource` is the only source identity accepted by the Phase 2 proof.
+It contains:
 
 ```text
 canonical_git_url
-resolved_immutable_commit
-resolved_source_content_digest
+commit_hash_algorithm       # sha1 or sha256
+resolved_commit             # full lower-case commit hash
 ```
 
-The commit and content digest are both checked before a source is accepted and
-before it is launched. Branches, moving tags, or an unpinned revision are not
-an install authority. Re-resolution is a new explicit install or upgrade
-decision, not an implicit update.
+The URL must be an ASCII canonical HTTPS URL identifying a non-root repository
+path. It has no user information, query, fragment, encoded authority,
+backslash, whitespace, or noncanonical host/port spelling. A commit is exactly
+40 lower-case hexadecimal characters for `sha1` or 64 for `sha256`. An
+abbreviated commit, branch, tag, moving ref, local path, or direct archive URL
+is not an immutable source identity. This validation describes the source
+proof input; it does not fetch Git data.
 
-This path is intentionally unsigned. V1 does not require or consume a
-publisher signature, an official signature, a marketplace listing, or an
-official publisher identity. A direct HTTPS archive URL is not a V1 source,
-and a local filesystem path is not a V1 source. Git transport and the explicit
-immutable pin are the complete source authority for this target policy.
+### 2. Resolver-owned snapshot and opaque proof
 
-### 2. Durable daemon-global provider data
+The resolver owns one `ResolverOwnedGitSnapshot` containing the pinned source,
+the resolver-declared source content digest, the exact source manifest bytes,
+the resolver-supplied `manifest_mode` Git regular mode for `manifest.json`, and
+resolver-owned entries. Its fields are private, its resolver constructor is
+crate-private, and
+`ResolverSourceEntry` plus its constructors/accessors are crate-private. Only
+resolver code can mint the snapshot, entries, manifest mode, or declared digest
+supplied to `verify_provider_source`; callers cannot assemble a proof from
+independently supplied source parts. No Git clone, fetch, ref resolution, or
+network transport is performed by this proof.
 
-Installed provider records, resolved source snapshots, materialized files,
-content digests, install state, and protected OAuth state live under one durable
-daemon-global provider data root. The root is independent of a project,
-workstream, workspace, current directory, or individual invocation. It is not
-selected by a provider package or by a model-generated path.
+`VerifiedProviderSource` is an opaque, resolver-owned, verifier-produced,
+`#[non_exhaustive]` authority artifact. Its fields are private and it has no
+public constructor; consumers receive read-only views of the source identity,
+content digest, manifest bytes/digest, verified files, capabilities, executable
+path, and executable bytes. The resolver-owned snapshot is the sole source of those
+proof inputs, so a consumer cannot combine independently supplied manifest,
+file, executable, or digest values into authority.
 
-The daemon owns recovery of this root. An install is either durably committed
-with its immutable source record and materialized snapshot or remains absent;
-partial installs, uncommitted metadata, and a directory that merely happens to
-exist are not launch authority.
+### 3. Exact source binding
 
-### 3. Verified-source materialization and process lifecycle
+The proof parses a neutral source manifest with no `publisher` or detached
+signature field and validates it with the source-only manifest contract. The
+source-only file table carries per-file `mode` fields; these are resolver-bound
+source fields and are not fields of the strict signed-archive manifest. The
+verifier extracts and matches them to the resolver entries before validating
+the neutral manifest view. Its exact UTF-8 bytes receive a SHA-256
+`manifest_digest`. The source content digest uses the fixed algorithm
+identifier `sha256:gorce.provider/source-content/v1`; it hashes a separate
+`manifest.json` record using the resolver-supplied regular Git mode, followed
+by all source-file records in sorted path order. Each record binds the path,
+Unix mode, byte length, and exact bytes. The resolver-declared digest must equal
+the verifier-computed digest.
 
-The host resolves and verifies the pinned Git source in a private staging
-location. Only after commit identity, content digest, manifest/package
-constraints, and executable binding pass does it materialize the verified
-source files into the daemon-global provider root. The final materialized
-directory and its metadata become visible through an atomic commit/rename
-operation; failures leave no partially committed provider available for launch.
+The source file set is bounded to 128 files, each file to 64 MiB, the total
+source payload to 256 MiB, and the manifest to 256 KiB. `manifest.json` is a
+separate resolver-supplied envelope record and must have a regular Git/Unix
+file mode; that mode is source-content-digest-bound. Every source entry must
+also be a regular file with an explicit regular Unix mode. Symlinks, Gitlinks,
+directories, special entries, and missing modes are rejected. Paths are safe
+ASCII relative paths: no leading root, empty/dot/dot-dot segments, backslash,
+colon, controls or non-printable bytes, Windows-invalid characters, trailing
+dots, or Windows reserved devices. `manifest.json` and `signature.json` are
+reserved, and source paths must be unique under case folding as well as by
+exact spelling.
 
-Each invocation starts one fresh provider process from the committed verified
-source and tears that process down after the invocation. V1 does not pool,
-reuse, or keep a provider process resident across invocations. The daemon owns
-timeouts, cancellation, exit status, cleanup, and recovery around that fresh
-process while preserving the `gorce.provider/v1` protocol boundary.
+The source-only manifest file table must exactly equal the resolved source file
+set. Every source file's path, size, SHA-256, and resolver-bound regular Unix
+mode must match its source-only manifest entry. A source-file mode-only change
+is therefore both manifest-bound and digest-sensitive; changing the separate
+`manifest.json` Git mode likewise changes the source content digest. The
+manifest executable path must identify that exact file and its SHA-256 must
+match both the file-table entry and the verified executable bytes exposed by
+the proof.
+The executable is proof data for a future host; this ADR does not launch it.
 
-### 4. Daemon-owned OAuth
+### 4. Source approval identity and trust
 
-OAuth is a daemon responsibility, not provider-source authority. The daemon
-owns the loopback listener, exact callback registration, state, PKCE verifier,
-authorization-code exchange, access-token and refresh-token storage, refresh,
-expiry/revocation handling, and crash/restart recovery. Callback acceptance is
-bound to the daemon-created state and PKCE transaction and is restricted to the
-daemon's loopback policy; a provider process does not receive a callback
-listener or a refresh token.
+`ProviderApprovalTuple::from_verified_source` derives approval only from one
+`VerifiedProviderSource`. The full source approval identity contains:
 
-Transient authorization state is recoverable and idempotent: incomplete flows
-are expired or cancelled safely, durable refresh state is recovered by the
-daemon, and a restarted daemon cannot accept an unrelated callback. A provider
-receives only the scoped access credential required for its authorized
-invocation through the existing host binding. These are Phase 2 host policies;
-the Phase 1 ABI and pure policy remain free of network OAuth exchange,
-persistence, and process supervision.
+```text
+provider_id
+package_digest / content_digest / archive_digest   # source content digest
+manifest_digest
+executable_sha256
+capabilities
+source_identity:
+  canonical_git_url
+  commit_hash_algorithm
+  resolved_commit
+  source_content_digest_algorithm
+publisher_fingerprint = absent
+```
 
-### 5. Trust model and non-sandbox boundary
+The `archive_digest` and `package_digest()` accessors are compatibility names
+for the source content digest; the source proof is not an archive. Approval
+comparison checks every source identity member as well as the content digest,
+manifest, executable, and capability set.
 
-An explicitly installed package is trusted as a same-user package for the
-requested source pin. That trust is not sandboxing. The provider process runs
-with the user's authority and may read user-accessible data or copy a
-credential delivered to it. A fresh process, a daemon-global root, immutable
-source verification, and loopback OAuth mediation do not create an untrusted
-package mode or a security sandbox. A future sandbox/proxy model requires a
-separate decision and real platform enforcement.
+The source variant sets `publisher_fingerprint` to absent. It consumes no
+Ed25519 signature, publisher signature, official signature, marketplace
+identity, or publisher-authentication claim. Publisher metadata that remains
+in the source manifest is impossible: the neutral source contract omits
+publisher and signature authority, and the verifier rejects a publisher key if
+one is supplied. Changed source content, manifest, mode, executable,
+capability, URL, commit, hash algorithm, or source-digest algorithm bindings
+require a new proof and approval comparison.
+
+The shared `source-fixtures.json` positive, negative, and multibyte UTF-8
+byte-bound cases execute across the three contract layers: Rust's source
+verifier, the source JSON Schemas, and Python's semantic contract checks. The
+UTF-8 byte-bound case is deliberately beyond a character-count `maxLength`
+prefilter; Rust and Python enforce the authoritative 256 KiB byte bound.
+Provider parity fixtures keep the surrounding source semantics aligned across
+implementations.
+
+This is a trusted-after-explicit-approval model, not sandboxing. Future host
+integration may execute an approved same-user package with the user's
+authority; the source proof itself does not create a sandbox or make provider
+code safe to receive secrets.
 
 ## Relationship to Phase 1
 
-The Phase 1 `verify_provider_archive` implementation and opaque
-`VerifiedProviderArchive` remain the current signed-package implementation and
-its conformance evidence. They are not the source authority for the target
-Phase 2 provider-install V1 path. Phase 2 supersedes that signed-archive launch
-model with the explicit unsigned Git pin, resolved commit, content digest,
-atomic materialization, fresh-process rule, and daemon-owned OAuth policy above.
-The separately versioned provider ABI and the Phase 1 pure approval/lease
-contracts remain the protocol and policy foundations unless a later ADR changes
-them.
+`verify_provider_archive` and opaque `VerifiedProviderArchive` remain the
+implemented signed-archive verifier and its Phase 1 regression/conformance
+path. They retain the signed ZIP, exact manifest, regular-file, file-table, and
+executable binding checks needed by those archive tests. The strict signed
+manifest file table has no source-only `mode` field, and the signed path still
+requires its publisher metadata/signature and rejects such source-only fields;
+the source path instead binds per-file modes plus the separate `manifest.json`
+Git mode and does neither publisher verification nor detached-signature
+verification. That verifier is not
+the Phase 2 source authority and is not a current launch path. The Phase 2
+source proof is unsigned and uses the resolver-owned snapshot and source
+content digest described above.
+
+The separately versioned provider ABI and the pure approval/lease contracts
+remain shared foundations. The source proof does not change the ABI wire
+methods or add runtime I/O.
 
 ## Phase boundary and consequences
 
-This ADR does not add a marketplace, publisher reputation, official signing,
-direct archive downloads, local-path installation, a sandbox, a provider
-process pool, or provider-owned OAuth callbacks. It also does not implement the
-Phase 2 host; it freezes the authority and recovery rules that implementation
-must satisfy.
+This ADR implements only source identity, snapshot verification, opaque proof
+views, and source-based approval derivation. It does **not** implement Git
+network transport, clone/fetch or ref resolution, a provider registry, daemon
+provider persistence or recovery, source materialization, executable launch,
+process supervision, daemon routes, or OAuth callback/exchange/token
+persistence. It also does not add direct archive or local-path installation,
+publisher signing, a marketplace, or a sandbox.
 
-The design makes user intent and immutable source identity auditable without
-claiming publisher authenticity. It centralizes persistence and recovery in the
-daemon, prevents partial source trees from becoming launchable, limits process
-lifetime to one invocation, and keeps OAuth secrets outside provider source.
-The tradeoff is that an explicitly installed same-user package remains fully
-trusted and that Git availability and the pinned source digest become part of
-the install/recovery contract.
+The proof makes the resolver-supplied source identity and exact bytes
+auditable, while deliberately making no publisher-authenticity claim. A later
+installation/hosting decision must separately define transport trust, durable
+storage, atomic materialization, process lifecycle, explicit user approval
+surfaces, and daemon-owned OAuth.

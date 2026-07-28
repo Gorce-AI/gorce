@@ -2,8 +2,9 @@
 
 Gorce is a local-first system with explicit boundaries between the daemon,
 agent, storage, protocol, provider, and client layers. The Phase 1 provider
-implementation supplies contracts and pure policy; daemon runtime integration
-remains deferred.
+implementation supplies contracts and pure policy, and the narrow Phase 2
+provider-source proof supplies resolver-snapshot verification. Provider daemon
+runtime integration remains deferred.
 
 ## Boundaries
 
@@ -22,41 +23,76 @@ remains deferred.
 Dependencies point toward stable foundations. Provider ABI and domain policy do
 not depend on daemon, SDK, TUI, or CLI implementation details.
 
-## Planned community-provider boundary
+## Community-provider boundary
 
 Phase 1 establishes the canonical provider ABI, pure provider policy, manifest
 and schema examples, deterministic mock conformance, and normative docs. The
-bounded Phase 2 target is frozen in ADR 0005; an explicitly installed provider
-will cross this planned boundary:
+narrow Phase 2 source-proof slice frozen in ADR 0005 verifies one resolver-owned
+snapshot. A future installed provider will cross the still-planned runtime
+boundary:
 
 ```text
 explicit Git source pin and install approval -> daemon-owned package host/broker -> provider process
 ```
 
-The package host/broker is planned for Phase 2 and is not present in this
-repository. For the target provider-install V1 path, its sole source authority
-is an explicit unsigned install from a canonical pinned Git URL, resolved full
-immutable commit, and resolved source content digest. A moving ref, direct
-HTTPS archive URL, local filesystem path, publisher/official signature, or
-marketplace listing is not a V1 source. The daemon stores this immutable
-record and its verified source files in one durable daemon-global provider data
-root, independent of projects, workspaces, and invocations.
+The package host/broker is planned and is not present in this repository. The
+implemented source proof accepts only an unsigned `PinnedGitSource`: a
+canonical HTTPS Git URL, a full lower-case immutable commit, its `sha1` or
+`sha256` hash algorithm, and a resolver-declared source content digest. Moving
+refs, direct HTTPS archive URLs, local filesystem paths, publisher/official
+signatures, and marketplace listings are not source authority. The proof does
+not perform Git network transport or resolve a ref; it consumes one
+`ResolverOwnedGitSnapshot` supplied by resolver code.
 
-The host resolves and verifies into private staging, then atomically commits the
-verified source files and install metadata; no partially materialized source is
-launchable. It starts one fresh provider process per invocation, owns timeout,
-cancellation, exit cleanup, and recovery, and does not pool or reuse provider
-processes. The daemon also owns loopback OAuth PKCE, callback/state validation,
-authorization-code exchange, refresh-token storage and recovery, and never
-delegates callback or refresh authority to the provider.
+`verify_provider_source` accepts only the resolver-owned
+`ResolverOwnedGitSnapshot`; its fields, resolver constructor, and
+`ResolverSourceEntry` construction/access are sealed to resolver code. The
+snapshot separately supplies `manifest_mode`, the Git regular mode for
+`manifest.json`; the verifier requires that mode, binds it into the
+source-content digest, and
+checks the exact source manifest bytes and digest, exact file table,
+regular-file Unix modes, safe relative paths, case-fold collisions, per-file
+hashes and sizes, and executable path/hash/bytes binding. It returns the
+opaque, resolver-owned, verifier-produced `VerifiedProviderSource`, whose
+private fields cannot be constructed by downstream crates. The source content
+digest uses `sha256:gorce.provider/source-content/v1` over the separate
+`manifest.json` path/mode/length/content record and sorted source-file
+path/mode/length/content records. Source approval carries the source content
+digest plus the full canonical URL/commit/hash-algorithm and
+source-content-digest-algorithm identity, and has no publisher fingerprint or
+signature.
+
+The source manifest is neutral with respect to publisher and
+detached-signature authority, but its source-only package file table declares a
+resolver-bound regular Unix `mode` for each file. Those source-only mode fields
+are distinct from the strict signed-archive manifest fields: the signed
+manifest file table rejects `mode`, while the source verifier extracts and
+matches source modes before validating the neutral manifest view. A resolver
+entry's mode must match its exact source manifest file-table mode; mode-only
+substitutions fail verification and change the content digest. The separate
+resolver-supplied `manifest.json` Git mode is also required to be regular and
+digest-bound.
+
+`source.schema.json`, `source-manifest.schema.json`, and the shared
+`source-fixtures.json` positive, negative, and UTF-8 byte-bound cases execute
+across Rust source verification, JSON Schema validation, and Python semantic
+contract checks. Provider parity fixtures continue to cross-check the shared
+path, URL, and validation semantics. These fixtures are proof evidence, not
+Git transport or provider-host implementation.
+
+The daemon-global provider root, persistence, staging/materialization, atomic
+commit, launch, process lifecycle, and daemon-owned OAuth described by the
+future host design are not implemented. No provider registry or install route
+exists either.
 
 The current Phase 1 `verify_provider_archive(archive_bytes)` implementation
 still verifies the bounded signed ZIP, exact manifest bytes, regular-file ZIP
-modes, file table, and executable hash. That signed-archive path is current
-Phase 1 implementation/conformance evidence, not the target Phase 2 install
-authority; ADR 0005 supersedes it for provider-install V1. The archive limit is
-16 MiB with at most 130 entries, and uncompressed archive content is bounded to
-268,701,696 bytes.
+modes, file table, and executable hash. That signed-archive path is retained
+only as Phase 1 implementation/conformance regression evidence, not as the
+Phase 2 source authority or a current launch path. The archive limit is 16 MiB
+with at most 130 entries, and uncompressed archive content is bounded to
+268,701,696 bytes. Its strict signed-manifest file fields, publisher/signature
+requirement, and rejection of source-only manifest file modes are unchanged.
 
 `VerifiedProviderArchive` is an opaque, verifier-produced `#[non_exhaustive]`
 authority artifact: its fields are private, it has no public constructor, and
@@ -73,20 +109,20 @@ components, and case-fold collisions. The manifest and archive reserve
 and Unix symlink, directory, and other non-regular modes are rejected before
 file binding.
 
-The deterministic mock host exercises these views rather than constructing
-authority data: it verifies the archive, compares the running executable with
-`executable_bytes()`, clones the verified `manifest()`, obtains the archive
-digest from the verified package view, writes only the verified executable
-bytes to its test path, and then spawns that file. The conformance test uses the
-same read-only getters. This bounded test harness is not the production
-package host/broker.
+The deterministic mock host exercises the Phase 1 archive views rather than
+constructing authority data: it verifies the archive, compares the running
+executable with `executable_bytes()`, clones the verified `manifest()`, obtains
+the archive digest from the verified package view, writes only the verified
+executable bytes to its test path, and then spawns that file. The conformance
+test uses the same read-only getters. This bounded test harness is not the
+production package host/broker and does not implement Git source transport or
+the Phase 2 source proof's future launch path.
 
-The Phase 2 trust boundary is explicit installation of a same-user package, not
-sandboxing. A provider runs with the user's authority and may read accessible
-user data or copy a delivered credential. Fresh processes, immutable source
-pins, atomic materialization, and daemon-owned OAuth mediation do not create an
-untrusted package mode or a sandbox; that would require a separate decision and
-real platform enforcement.
+The eventual Phase 2 trust boundary is explicit installation of a same-user
+package, not sandboxing. A provider would run with the user's authority and
+could read accessible user data or copy a delivered credential. Source
+immutability does not create an untrusted package mode or a sandbox; that would
+require a separate decision and real platform enforcement.
 
 The provider process will speak `gorce.provider/v1` over strict LF-NDJSON, not
 `gorce-protocol`. Exactly one `gorce.initialize` request comes first with the
@@ -106,9 +142,11 @@ ABI maximum.
 
 Runtime tool descriptors and capabilities must exactly match the approved
 manifest. Host-derived tool IDs use
-`gorce.provider/v1/tool/{archive_digest}/{provider_id}/{tool_name}`. A
-`tool.invoke` may carry a copyable API-key or access-token delivery only when
-the host-authoritative `AuthorizedInvocation` binds the approved archive,
+`gorce.provider/v1/tool/{package_digest}/{provider_id}/{tool_name}`. For a
+signed archive `package_digest` is the archive digest; for the source proof it
+is the source content digest. A `tool.invoke` may carry a copyable API-key or
+access-token delivery only when the host-authoritative `AuthorizedInvocation`
+binds the approved package,
 tool, invocation, auth method, credential class, delivery kind, and deadline;
 the invocation auth method/class must match the tool's manifest binding, and a
 credentialed tool cannot omit delivery. V1 has no credential-redeem method and
@@ -186,23 +224,23 @@ invalidation; that host integration is not implemented here.
 
 ## Runtime status and stop lines
 
-The ABI crate and pure core policy are implemented; no package registry,
-package host/broker, provider process supervisor, protected credential
-persistence, or daemon provider route exists in this repository. The provider
-ABI implementation does not perform I/O, OAuth exchange, persistence, or secret
-storage. The mock conformance harness does perform bounded test-process reap
-and stderr capture solely to prove abnormal-exit behavior; that is not a
+The ABI crate, pure core policy, and narrow resolver-snapshot source proof are
+implemented. No Git network transport or resolver, package registry,
+package host/broker, provider process supervisor, protected provider
+credential/source persistence, source materialization, executable launch, or
+daemon provider route exists in this repository. The provider ABI and source
+proof do not perform I/O, OAuth exchange, persistence, or secret storage. The
+mock conformance harness does perform bounded test-process reap and stderr
+capture solely to prove Phase 1 abnormal-exit behavior; that is not a
 production provider supervisor.
 
-Phase 1 stops at the ABI, policy, package proof/types, schemas/examples, mock
-conformance, and normative documentation. ADR 0005 freezes the bounded Phase 2
-target; Phase 2 is the first phase for the registry, host/broker, process
-timeout/kill/reap supervision, OAuth and credential state, protected
-persistence, scoped lease issuance, and authorization integration. Phase 3 is
-the first phase for authenticated
-daemon routes, SDK/client models, authoring surfaces, and public-boundary
-integration evidence. These stop lines do not claim a sandbox or an untrusted
-package mode.
+ADR 0005 records the narrow Phase 2 source-proof boundary. Git transport,
+registry and install surfaces, durable persistence/recovery, staging and
+materialization, launch/process lifecycle, OAuth and credential state, scoped
+lease issuance, and authorization integration remain future host work. Phase 3
+is the first phase for authenticated daemon routes, SDK/client models,
+authoring surfaces, and public-boundary integration evidence. These stop lines
+do not claim a sandbox or an untrusted package mode.
 
 ## Compatibility
 

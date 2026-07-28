@@ -1,3 +1,5 @@
+import copy
+import hashlib
 import json
 import ipaddress
 import math
@@ -308,6 +310,140 @@ def validate_provider_manifest_contract(value):
         validate_provider_local_schema(tool["output_schema"])
         if not set(tool["network_origins"]).issubset(set(value["capabilities"]["network_origins"])):
             raise SchemaViolation("provider tool origin is not approved")
+
+
+def _source_content_digest(value):
+    hasher = hashlib.sha256()
+    algorithm = value["source_content_digest_algorithm"]
+    hasher.update(algorithm.encode("ascii"))
+    hasher.update(b"\0")
+
+    def record(path, mode, content):
+        path_bytes = path.encode("utf-8")
+        content_bytes = bytes(content)
+        hasher.update(len(path_bytes).to_bytes(8, "big"))
+        hasher.update(path_bytes)
+        hasher.update(mode.to_bytes(4, "big"))
+        hasher.update(len(content_bytes).to_bytes(8, "big"))
+        hasher.update(content_bytes)
+
+    record(
+        "manifest.json",
+        value["manifest_mode"],
+        value["manifest"].encode("utf-8"),
+    )
+    for entry in sorted(value["files"], key=lambda item: item["path"]):
+        record(entry["path"], entry["mode"] or 0, entry["content"])
+    return hasher.hexdigest()
+
+
+def validate_provider_source_contract(value):
+    source = value["source"]
+    canonical_git_url = source["canonical_git_url"]
+    validate_provider_https_url(canonical_git_url, allow_path=True)
+    if "%" in canonical_git_url or "\\" in canonical_git_url:
+        raise SchemaViolation("source Git URL must not contain encoded or backslash text")
+    parsed_url = urlparse(canonical_git_url)
+    if (
+        not parsed_url.path
+        or parsed_url.path == "/"
+        or parsed_url.path.endswith("/")
+        or any(
+            segment in {"", ".", ".."}
+            for segment in parsed_url.path.split("/")[1:]
+        )
+    ):
+        raise SchemaViolation(
+            "source Git URL must identify a canonical repository path"
+        )
+    algorithm = source["commit_hash_algorithm"]
+    expected_length = {"sha1": 40, "sha256": 64}[algorithm]
+    commit = source["resolved_commit"]
+    if len(commit) != expected_length or any(
+        char not in "0123456789abcdef" for char in commit
+    ):
+        raise SchemaViolation("source commit must be a full lower-case immutable hash")
+    if value["source_content_digest_algorithm"] != "sha256:gorce.provider/source-content/v1":
+        raise SchemaViolation("source digest algorithm is not canonical")
+    manifest_mode = value["manifest_mode"]
+    if (
+        not isinstance(manifest_mode, int)
+        or isinstance(manifest_mode, bool)
+        or manifest_mode & 0o170000 != 0o100000
+    ):
+        raise SchemaViolation("manifest.json mode must be a regular Unix mode")
+
+    manifest_bytes = value["manifest"].encode("utf-8")
+    if not manifest_bytes or len(manifest_bytes) > 256 * 1024:
+        raise SchemaViolation("source manifest exceeds its UTF-8 byte bound")
+    try:
+        manifest = json.loads(value["manifest"])
+    except json.JSONDecodeError as error:
+        raise SchemaViolation("source manifest bytes are not JSON") from error
+    if "publisher" in manifest:
+        raise SchemaViolation("source manifests must not carry publisher authority")
+    validate_provider_manifest_contract(manifest)
+    if hashlib.sha256(manifest_bytes).hexdigest() != value["manifest_digest"]:
+        raise SchemaViolation("source manifest digest does not match exact bytes")
+
+    paths = [entry["path"] for entry in value["files"]]
+    if len({path.lower() for path in paths}) != len(paths):
+        raise SchemaViolation("source file paths must be case-insensitively unique")
+    expected_files = {entry["path"]: entry for entry in manifest["package"]["files"]}
+    if set(paths) != set(expected_files):
+        raise SchemaViolation("source file table must exactly match the manifest")
+    for entry in value["files"]:
+        path = entry["path"]
+        parts = path.split("/")
+        if path.lower() in {"manifest.json", "signature.json"}:
+            raise SchemaViolation("source path is reserved")
+        if (
+            path.startswith("/")
+            or not path.isascii()
+            or any(not ("!" <= char <= "~") for char in path)
+            or "\\" in path
+            or any(char in path for char in ':<>"|?*')
+            or "" in parts
+            or any(part in {".", ".."} for part in parts)
+            or any(part.endswith(".") for part in parts)
+        ):
+            raise SchemaViolation("source path is unsafe")
+        if entry["kind"] != "regular_file":
+            raise SchemaViolation("source entry is not a regular file")
+        try:
+            content_bytes = bytes(entry["content"])
+        except (TypeError, ValueError) as error:
+            raise SchemaViolation("source file content must be byte values") from error
+        if entry["size"] != len(content_bytes):
+            raise SchemaViolation("source file size does not match content")
+        mode = entry["mode"]
+        if (
+            not isinstance(mode, int)
+            or isinstance(mode, bool)
+            or mode & 0o170000 != 0o100000
+        ):
+            raise SchemaViolation("source file mode must be a regular Unix mode")
+        digest = hashlib.sha256(content_bytes).hexdigest()
+        if entry["sha256"] != digest or expected_files[path]["sha256"] != digest:
+            raise SchemaViolation("source file digest does not match content")
+        if expected_files[path]["size"] != len(content_bytes):
+            raise SchemaViolation("source file size does not match manifest")
+        if expected_files[path].get("mode") != mode:
+            raise SchemaViolation("source file mode does not match the manifest")
+
+    executable = value["executable"]
+    declared = expected_files.get(executable["path"])
+    actual = next((entry for entry in value["files"] if entry["path"] == executable["path"]), None)
+    if declared is None or actual is None:
+        raise SchemaViolation("source executable is missing from the exact file table")
+    if (
+        executable["size"] != actual["size"]
+        or executable["sha256"] != actual["sha256"]
+        or executable["sha256"] != manifest["package"]["executable"]["sha256"]
+    ):
+        raise SchemaViolation("source executable binding does not match")
+    if _source_content_digest(value) != value["source_content_digest"]:
+        raise SchemaViolation("source content digest does not match the snapshot")
 
 
 def validate_provider_local_schema(schema, depth=0, nodes=None):
@@ -939,6 +1075,79 @@ class ContractTest(unittest.TestCase):
                         validate_provider_rpc_contract(example)
                     if path.name == "signed-package.schema.json":
                         validate_provider_signed_package_contract(example)
+
+    def test_provider_source_fixtures_match_schema_and_semantic_contract(self):
+        fixtures = json.loads((PROVIDER_SCHEMA_DIR / "source-fixtures.json").read_text())
+        schema = json.loads((PROVIDER_SCHEMA_DIR / "source.schema.json").read_text())
+        manifest_schema = json.loads(
+            (PROVIDER_SCHEMA_DIR / "source-manifest.schema.json").read_text()
+        )
+        base = fixtures["positive"][0]["value"]
+        validate(base, schema)
+        validate(json.loads(base["manifest"]), manifest_schema)
+        validate_provider_source_contract(base)
+        oversized_manifest = copy.deepcopy(base)
+        oversized_manifest["manifest"] = "é" * (256 * 1024 // 2 + 1)
+        with self.assertRaises(SchemaViolation):
+            validate_provider_source_contract(oversized_manifest)
+
+        def set_path(value, path, replacement):
+            parts = path.split(".")
+            cursor = value
+            for part in parts[:-1]:
+                cursor = cursor[int(part)] if isinstance(cursor, list) else cursor[part]
+            last = parts[-1]
+            if isinstance(cursor, list):
+                cursor[int(last)] = replacement
+            else:
+                cursor[last] = replacement
+
+        for fixture in fixtures["negative"]:
+            value = copy.deepcopy(base)
+            if fixture.get("operation") == "append_extra_file":
+                extra = copy.deepcopy(value["files"][0])
+                extra.update(
+                    {
+                        "path": "extra",
+                        "content": "extra",
+                        "size": 5,
+                        "sha256": hashlib.sha256(b"extra").hexdigest(),
+                    }
+                )
+                value["files"].append(extra)
+            if fixture.get("operation") == "add_publisher_to_manifest":
+                manifest = json.loads(value["manifest"])
+                manifest["publisher"] = {
+                    "name": "forged",
+                    "fingerprint": "0" * 64,
+                }
+                value["manifest"] = json.dumps(
+                    manifest, ensure_ascii=False, separators=(",", ":")
+                )
+            if fixture.get("operation") == "change_manifest_executable_path":
+                manifest = json.loads(value["manifest"])
+                manifest["package"]["executable"]["path"] = "bin/other"
+                value["manifest"] = json.dumps(
+                    manifest, ensure_ascii=False, separators=(",", ":")
+                )
+            if fixture.get("operation") == "oversized_manifest":
+                value["manifest"] = "é" * (256 * 1024 // 2 + 1)
+            for path, replacement in fixture.get("changes", {}).items():
+                set_path(value, path, replacement)
+            schema_failed = False
+            try:
+                validate(value, schema)
+            except SchemaViolation:
+                schema_failed = True
+            semantic_failed = False
+            try:
+                validate_provider_source_contract(value)
+            except SchemaViolation:
+                semantic_failed = True
+            self.assertTrue(
+                schema_failed or semantic_failed,
+                fixture["reason"],
+            )
 
     def test_shared_provider_fixtures_pass_schema_and_semantic_contracts(self):
         fixtures = json.loads(

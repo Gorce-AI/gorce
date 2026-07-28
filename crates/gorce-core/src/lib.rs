@@ -22,7 +22,7 @@ pub use promotion::{merge_plan_promotion, normalize_promotion_mappings, PlanProm
 pub use provider::{
     approval_tuple_matches, compare_approval_tuple, decide_lease, lifecycle_transition,
     validate_capability_subset, LeaseDenial, ProviderApprovalTuple, ProviderCapabilitySet,
-    ProviderLifecycle, ProviderPolicyError,
+    ProviderLifecycle, ProviderPolicyError, ProviderSourceIdentity,
 };
 pub use task::{
     readiness_projection, AddEdge, CancelTaskCommand, CompleteTaskCommand, DeferTaskCommand,

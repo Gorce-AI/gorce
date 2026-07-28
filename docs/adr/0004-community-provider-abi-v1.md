@@ -5,12 +5,13 @@
 
 ## Context
 
-Gorce needs an installable provider contract without embedding
-provider-specific API code in the daemon. The Phase 1 implementation freezes a
-signed package proof, a small local JSON-RPC surface, tool and schema
-validation, and host-authorized secret delivery. The provider ABI is a public
-contract, but the package host/broker and daemon integration remain later-phase
-work.
+Gorce needs a provider contract without embedding provider-specific API code in
+the daemon. The Phase 1 implementation freezes a signed package proof, a small
+local JSON-RPC surface, tool and schema validation, and host-authorized secret
+delivery. The narrow Phase 2 implementation additionally freezes an unsigned,
+pinned-Git source proof; it does not implement its Git transport or provider
+runtime integration. The provider ABI is a public contract, but the package
+host/broker and daemon integration remain later-phase work.
 
 The canonical ABI identifier is `gorce.provider/v1`. It is independent of the
 daemon-client `gorce-protocol` and must not become a second spelling of that
@@ -18,7 +19,7 @@ client protocol.
 
 ## Decision
 
-### 1. Package proof and approval identity
+### 1. Phase 1 signed archive proof and approval identity
 
 A provider is distributed as a `.gorce-provider` ZIP archive. The archive is
 bounded before extraction:
@@ -60,15 +61,16 @@ Ed25519 and signs those exact manifest bytes. The signed manifest contains the
 file table (`path`, `size`, `sha256`) and the executable entrypoint (`path`,
 `sha256`). The executable entry must appear in the file table with the same
 SHA-256. The publisher fingerprint is lower-case SHA-256 of the Ed25519 public
-key.
+key on the signed-archive path.
 
-The sole launch-authorizing verifier is `verify_provider_archive(archive_bytes)`.
+The Phase 1 signed-archive verifier is `verify_provider_archive(archive_bytes)`.
 It reads the manifest, signature, file table, and executable from the same raw
 archive bytes; it accepts no split manifest/file/executable inputs and no
 caller-supplied digest. `ProviderApprovalTuple::from_verified_archive` derives
-approval only from the returned `VerifiedProviderArchive` artifact and checks
-that its signed manifest, archive digest, executable path, and executable hash
-are internally consistent.
+the archive regression-path approval only from the returned
+`VerifiedProviderArchive` artifact and checks that its signed manifest, archive
+digest, executable path, and executable hash are internally consistent. No
+current runtime launch path is implemented.
 
 `VerifiedProviderArchive` is an opaque, verifier-produced authority artifact:
 its fields are private, it has no public constructor, and it is
@@ -76,16 +78,16 @@ its fields are private, it has no public constructor, and it is
 Consumers receive read-only getter views only:
 `package()`, `manifest()`, `archive_digest()`, `signed_manifest()`,
 `signature()`, `executable_path()`, and `executable_bytes()`. The complete
-package proof is therefore the host-computed archive digest, the detached
-Ed25519 signature over the exact manifest bytes, the validated manifest file
-table, and the executable bytes extracted from that archive. A process may be
-spawned only from the executable whose hash was verified by that proof. Phase 1
+archive regression proof is therefore the host-computed archive digest, the
+detached Ed25519 signature over the exact manifest bytes, the validated manifest
+file table, and the executable bytes extracted from that archive. Phase 1
 conformance verifies the archive first, compares the running mock executable to
 the read-only `executable_bytes()` view, and spawns only those verified bytes;
 an independent executable and hash input do not establish package identity.
+This conformance spawn is not a production provider host.
 
-The implemented approval identity is `ProviderApprovalTuple` with these exact
-fields:
+On the signed-archive regression path, `ProviderApprovalTuple` has these
+fields (the source variant is described below):
 
 ```text
 provider_id
@@ -96,7 +98,8 @@ executable_sha256
 capabilities
 ```
 
-`manifest_digest` is lower-case SHA-256 of the exact signed manifest bytes.
+`manifest_digest` is lower-case SHA-256 of the exact signed manifest bytes on
+this archive path.
 `capabilities` is the exact `ProviderCapabilitySet` containing:
 
 ```text
@@ -113,23 +116,113 @@ tool_credentials
 Approval comparison is exact for every field. A changed archive, manifest,
 publisher key, executable, authentication policy, tool policy, origin,
 side-effect declaration, credential class, or delivery binding requires new
-approval. A valid signature without a matching approval tuple is not launch
-authorization.
+approval. A valid signature without a matching approval tuple is not archive
+approval or launch authority.
 
-### 2. Trust model
+This publisher/signature requirement is specific to the signed archive
+regression path. Its strict `Manifest::validate` contract has no source-only
+file `mode` fields and rejects manifests that supply them. The source path
+uses a separate source-manifest representation whose file table carries
+resolver-bound modes; verification extracts those fields, matches them to the
+resolver entries, removes them for the neutral `Manifest::validate_source`
+view, and does not require publisher or detached-signature authority.
+
+### 2. Narrow Phase 2 pinned-Git source proof
+
+The source-proof path is separate from the signed ZIP path above. A
+`PinnedGitSource` contains a canonical ASCII HTTPS Git URL, a `sha1` or
+`sha256` commit hash algorithm, and a full lower-case immutable commit (40 or
+64 hexadecimal characters respectively). Query/fragment/userinfo, encoded or
+backslash-normalized authorities, noncanonical hosts/ports, moving refs,
+abbreviated commits, local paths, and direct archive URLs are rejected. This
+validation does not fetch or resolve Git data.
+
+Only resolver code can construct the immutable `ResolverOwnedGitSnapshot`, its
+crate-private `ResolverSourceEntry` values, and its declared source content
+digest. The snapshot fields and resolver constructor are private to the
+resolver boundary. `verify_provider_source` returns the opaque,
+resolver-owned, verifier-produced, `#[non_exhaustive]`
+`VerifiedProviderSource` only after that sealed snapshot passes verification.
+Its fields are private and consumers receive read-only views; a consumer cannot
+construct authority by combining separate manifest, file, executable, mode, or
+digest inputs.
+
+The proof parses a neutral source manifest with no `publisher` or detached
+signature field and validates it with the source-only manifest contract. The
+source-only file table carries resolver-bound per-file `mode` fields, which are
+distinct from the strict signed-archive manifest fields above. It retains the
+exact manifest bytes and computes their lower-case SHA-256 `manifest_digest`.
+The resolver also supplies `manifest_mode`, the regular Git mode of the
+separate `manifest.json` envelope entry. The source content digest uses the fixed
+identifier `sha256:gorce.provider/source-content/v1`, hashing that exact
+`manifest.json` path/mode/length/content record and all source-file records in
+sorted path order. Each record binds its path, Unix mode, byte length, and
+exact bytes. The declared digest must equal that computed digest.
+
+The source set is bounded to 128 files, 64 MiB per file, 256 MiB total payload,
+and a 256 KiB manifest. The resolver-supplied `manifest.json` mode must be a
+regular Git/Unix mode and is bound by the source content digest. Every source
+entry must also be a regular file with an explicit regular Unix mode; symlinks,
+Gitlinks, directories, special entries, and missing modes fail. Paths use safe
+ASCII relative forward-slash segments and reject roots, empty/dot/dot-dot
+segments, backslashes, colons, controls, Windows-invalid characters, trailing
+dots, and Windows reserved devices. `manifest.json` and `signature.json` are
+reserved, and paths that collide under case folding are rejected.
+
+The resolved file set must exactly match the source-only manifest file table.
+Each source file's path, size, SHA-256, and resolver-bound regular Unix mode
+must match its source-only manifest entry. Source-file mode-only changes are
+rejected and are digest-sensitive; changing the separate `manifest.json` Git
+mode is also digest-sensitive. The manifest executable path must select that
+exact file, and its size/hash must match both the file-table entry and the
+executable bytes exposed by `VerifiedProviderSource`.
+
+`ProviderApprovalTuple::from_verified_source` derives source approval only from
+that opaque artifact. The full source approval identity contains the provider
+ID, source content digest (the shared `package_digest`/`archive_digest` slot),
+exact manifest digest, executable SHA-256, complete manifest-derived capability
+set, and a `source_identity` containing:
+
+```text
+canonical_git_url
+commit_hash_algorithm
+resolved_commit
+source_content_digest_algorithm
+```
+
+Approval comparison checks every source identity member as well as content,
+manifest, executable, and capability bindings. The source variant sets
+`publisher_fingerprint` to absent: it consumes no Ed25519, publisher, or
+official signature. The neutral source manifest omits publisher/signature
+authority, and a supplied publisher key is rejected rather than treated as
+source identity.
+
+The shared `source-fixtures.json` positive, negative, and multibyte UTF-8
+byte-bound cases execute across Rust source verification, JSON Schema
+validation, and Python semantic contract checks. The UTF-8 case covers the
+authoritative byte bound even where a schema character-count prefilter passes.
+The source schemas and provider parity fixtures keep the source and shared
+semantic contracts aligned.
+
+This proof is not an installer or provider host. Git network transport,
+registry, provider persistence/recovery, source materialization, executable
+launch, process supervision, daemon routes, and OAuth exchange/callback/token
+state are not implemented.
+
+### 3. Trust model
 
 V1 is **trusted-after-explicit-approval**. The approval policy must state:
 
 > A trusted package executes as the user and can copy a delivered access token
 > or API key.
 
-The signed archive, process boundary, approval tuple, scoped delivery, and
-schema checks are not malicious-package isolation. A trusted provider can copy
-a secret after delivery and can use its user-level process permissions. A
-future untrusted mode requires real cross-platform sandboxing and/or a
-host-mediated HTTP proxy; it is not implied by this ABI.
+The signed archive or unsigned source proof, process boundary, approval tuple,
+scoped delivery, and schema checks are not malicious-package isolation. A
+trusted provider can copy a secret after delivery and can use its user-level
+process permissions. A future untrusted mode requires real cross-platform
+sandboxing and/or a host-mediated HTTP proxy; it is not implied by this ABI.
 
-### 3. Wire contract and protocol separation
+### 4. Wire contract and protocol separation
 
 The provider process speaks strict JSON-RPC 2.0 over LF-terminated NDJSON on
 local stdin/stdout. The provider runtime contract is `gorce.provider/v1`,
@@ -192,7 +285,7 @@ while a sequence violation returns `-32020`.
 An unusable or unrecoverable ID is not fabricated: the provider terminates
 without authorizing an uncorrelated operation.
 
-### 4. First request, version, and method set
+### 5. First request, version, and method set
 
 There is exactly one `gorce.initialize` request, and it is the first request.
 Its params are exactly:
@@ -229,7 +322,7 @@ package-controlled credential exchange in V1. Known-method requests before
 initialization or duplicate initialization receive the correlated sequence
 error `-32020`; successful `gorce.shutdown` ends the mock process.
 
-### 5. Host-derived tools and schema equivalence
+### 6. Host-derived tools and schema equivalence
 
 The manifest declares a package-local tool `name`, description, input schema,
 output schema, side effects, `auth_method_id`, `credential_class`, and network
@@ -238,13 +331,14 @@ or both present for a credentialed tool. The package never supplies an
 authority-bearing tool ID. The host derives the canonical ID with:
 
 ```text
-gorce.provider/v1/tool/{archive_digest}/{provider_id}/{tool_name}
+gorce.provider/v1/tool/{package_digest}/{provider_id}/{tool_name}
 ```
 
-The digest is the installed archive's 64-character lower-case SHA-256. Provider
-and tool identifiers are lower-case ASCII identifiers, each at most 64 bytes;
-the complete tool ID is bounded by 256 bytes. A forged, undeclared, or
-digest-mismatched tool ID is rejected.
+For a signed archive, `package_digest` is its 64-character lower-case SHA-256
+archive digest; for the source proof, it is the 64-character lower-case source
+content digest. Provider and tool identifiers are lower-case ASCII identifiers,
+each at most 64 bytes; the complete tool ID is bounded by 256 bytes. A forged,
+undeclared, or digest-mismatched tool ID is rejected.
 
 V1 local schemas are JSON objects using only these keywords:
 `type`, `title`, `description`, `properties`, `required`, `items`,
@@ -328,7 +422,7 @@ as `1.0` remains valid wherever an integer schema keyword or bound is required,
 while a fraction is invalid; integer-valued decimal bounds participate in the
 same minimum/maximum inversion checks as integer notation.
 
-### 6. Manifest and authentication validation
+### 7. Manifest and authentication validation
 
 The manifest format is exactly `gorce.provider/v1`. It permits only these
 authentication method kinds:
@@ -379,7 +473,7 @@ authorization-code exchange, refresh persistence/execution, token lifecycle,
 and origin/DNS policy are host-owned. This ABI only validates declarations; it
 does not implement network OAuth exchange or callbacks.
 
-### 7. Authorized invocation and secret delivery
+### 8. Authorized invocation and secret delivery
 
 `tool.invoke` carries `ToolInvokeParams`:
 
@@ -412,11 +506,11 @@ tool declaration and the initialize-result tool descriptor for
 bytes; `tool_id` is bounded to 256 bytes. The same 64-byte invocation-ID bound
 applies to `operation.cancel`.
 
-The host-authoritative `AuthorizedInvocation` binds the approved archive
+The host-authoritative `AuthorizedInvocation` binds the approved package
 digest, digest-bound tool ID, invocation ID, auth method ID, credential class,
 delivery kind, and deadline. The core approval and lease policy uses that
-binding; no caller-supplied approval boolean authorizes delivery. The archive,
-tool, credential, and deadline must match approval and the installed manifest.
+binding; no caller-supplied approval boolean authorizes delivery. The package,
+tool, credential, and deadline must match approval and the provider manifest.
 For a credentialed tool, the invocation auth method ID must equal the tool's
 manifest `auth_method_id`, and that auth method's credential class must equal the
 tool and invocation class.
@@ -428,12 +522,12 @@ The delivery contains the matching credential class, a non-empty copyable value
 of at most 4,096 bytes with no control characters, and a positive expiry no
 later than the invocation deadline. It is carried only in `tool.invoke`, never
 contains a refresh token, and cannot be redeemed through another RPC. An
-expired invocation deadline, archive/tool/auth/class/kind mismatch, unapproved
+expired invocation deadline, package/tool/auth/class/kind mismatch, unapproved
 tool, or delivery absence is denied.
 
 The pure `gorce-core::provider` policy also requires the invocation deadline to
 be in the future and within the host-supplied maximum lifetime, and requires
-the exact approved archive and capability binding. It performs no I/O,
+the exact approved package and capability binding. It performs no I/O,
 process management, OAuth exchange, persistence, or secret storage.
 
 Lease decisions reject `LeaseDenial::Expired` when the invocation deadline is
@@ -441,7 +535,7 @@ at or before the supplied host time, or when a delivered secret's expiry is at
 or before that time. `Expired` is not a `ProviderLifecycle` state; it is only a
 lease-denial reason. The policy also rejects `LeaseDenial::LifetimeTooLong`
 when the invocation exceeds the host-supplied maximum lifetime, and rejects
-scope mismatches for the archive, tool, auth method, credential class, delivery
+scope mismatches for the package, tool, auth method, credential class, delivery
 kind, or delivery deadline. Expired delivery may not issue a lease.
 
 The lifecycle transition table makes `Revoked` terminal. Direct transitions to
@@ -456,7 +550,7 @@ processes, or invalidate approvals. The future host/broker must perform those
 lifecycle actions and discard the approval tuple on revocation; that
 integration is outside this Phase 1 implementation.
 
-### 8. Cancellation, deadlines, and process failure
+### 9. Cancellation, deadlines, and process failure
 
 `deadline_unix_ms` is an absolute deadline. A provider rejects an expired
 invocation with JSON-RPC error code `-32010`. `operation.cancel` carries an
@@ -487,20 +581,23 @@ daemon runtime.
 ## Consequences and phase boundary
 
 The ABI has one canonical version and method vocabulary, bounded framing, exact
-runtime declarations, and a package proof that binds the spawned executable to
-the signed archive. Host-derived IDs and authoritative invocation binding keep
-provider data separate from daemon authority. Redacted diagnostics reduce
-accidental disclosure but do not make a trusted package safe from intentional
-copying.
+runtime declarations, and proof paths that bind package identity and executable
+content. The Phase 1 archive path is signed; the narrow Phase 2 source path is
+unsigned and uses the resolver-owned source content digest. Host-derived IDs and
+authoritative invocation binding keep provider data separate from daemon
+authority. Redacted diagnostics reduce accidental disclosure but do not make a
+trusted package safe from intentional copying.
 
-Phase 1 owns the separately versioned ABI, pure provider policy, manifest and
-schema examples, deterministic mock conformance, and these normative docs. It
-does not add the daemon provider registry/routes, package host/broker,
-protected credential persistence, network OAuth exchange/callback code,
-SDK/TUI surfaces, sandbox claims or an untrusted package mode, model RPC, or
-concrete vendor adapters.
+Phase 1 owns the separately versioned ABI, pure provider policy, signed archive
+proof, manifest and schema examples, deterministic mock conformance, and these
+normative docs. The narrow Phase 2 slice owns only the pinned-Git source proof
+and source-based approval derivation. Neither slice adds Git network transport,
+the daemon provider registry/routes, package host/broker, provider persistence,
+source materialization, executable launch, protected credential persistence,
+network OAuth exchange/callback code, SDK/TUI surfaces, sandbox claims or an
+untrusted package mode, model RPC, or concrete vendor adapters.
 
-Phase 2 is the first phase for the package registry and host/broker,
+The remaining Phase 2 work is the package registry and host/broker,
 credential/OAuth state machine, protected persistence, process timeout/kill
 policy, scoped lease issuance, and authorization integration. Phase 3 is the
 first phase for authenticated daemon routes, SDK/client models, authoring

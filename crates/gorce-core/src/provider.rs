@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use gorce_provider_abi::{
-    derive_tool_id, digest_hex, AuthMethod, AuthorizedInvocation, DeliveryKind, Manifest,
-    ScopedSecretDelivery, SideEffect, VerifiedProviderArchive,
+    derive_tool_id, digest_hex, AuthMethod, AuthorizedInvocation, DeliveryKind, GitHashAlgorithm,
+    Manifest, ScopedSecretDelivery, SideEffect, VerifiedProviderArchive, VerifiedProviderSource,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,9 +90,6 @@ impl ProviderCapabilitySet {
         manifest: &Manifest,
         archive_digest: &str,
     ) -> Result<Self, ProviderPolicyError> {
-        manifest
-            .validate()
-            .map_err(|error| ProviderPolicyError::InvalidManifest(error.to_string()))?;
         let mut capabilities = Self {
             auth_method_ids: manifest
                 .capabilities
@@ -168,9 +165,36 @@ pub struct ProviderApprovalTuple {
     provider_id: String,
     archive_digest: String,
     manifest_digest: String,
-    publisher_fingerprint: String,
+    publisher_fingerprint: Option<String>,
     executable_sha256: String,
     capabilities: ProviderCapabilitySet,
+    source_identity: Option<ProviderSourceIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderSourceIdentity {
+    canonical_git_url: String,
+    commit_hash_algorithm: GitHashAlgorithm,
+    resolved_commit: String,
+    source_content_digest_algorithm: &'static str,
+}
+
+impl ProviderSourceIdentity {
+    pub fn canonical_git_url(&self) -> &str {
+        &self.canonical_git_url
+    }
+
+    pub fn commit_hash_algorithm(&self) -> GitHashAlgorithm {
+        self.commit_hash_algorithm
+    }
+
+    pub fn resolved_commit(&self) -> &str {
+        &self.resolved_commit
+    }
+
+    pub fn source_content_digest_algorithm(&self) -> &'static str {
+        self.source_content_digest_algorithm
+    }
 }
 
 impl ProviderApprovalTuple {
@@ -180,39 +204,93 @@ impl ProviderApprovalTuple {
     pub fn from_verified_archive(
         artifact: &VerifiedProviderArchive,
     ) -> Result<Self, ProviderPolicyError> {
-        let manifest = artifact.manifest();
-        let executable = &manifest.package.executable;
+        Self::from_verified_parts(
+            artifact.manifest(),
+            artifact.signed_manifest().as_bytes(),
+            artifact.archive_digest(),
+            artifact.executable_path(),
+            artifact.executable_bytes(),
+            artifact
+                .manifest()
+                .publisher
+                .as_ref()
+                .map(|publisher| publisher.fingerprint.clone()),
+            None,
+        )
+    }
+
+    /// Derive approval from the resolver-owned, unsigned Git source proof. The
+    /// source content digest is the package identity; publisher fingerprints
+    /// are deliberately not part of this approval identity.
+    pub fn from_verified_source(
+        artifact: &VerifiedProviderSource,
+    ) -> Result<Self, ProviderPolicyError> {
+        if artifact.manifest_digest() != digest_hex(artifact.manifest_bytes()) {
+            return Err(ProviderPolicyError::InvalidManifest(
+                "verified provider source has an inconsistent manifest digest".to_owned(),
+            ));
+        }
+        Self::from_verified_parts(
+            artifact.manifest(),
+            artifact.manifest_bytes(),
+            artifact.source_content_digest(),
+            artifact.executable_path(),
+            artifact.executable_bytes(),
+            None,
+            Some(ProviderSourceIdentity {
+                canonical_git_url: artifact.canonical_git_url().to_owned(),
+                commit_hash_algorithm: artifact.commit_hash_algorithm(),
+                resolved_commit: artifact.resolved_commit().to_owned(),
+                source_content_digest_algorithm: artifact.source_content_digest_algorithm(),
+            }),
+        )
+    }
+
+    fn from_verified_parts(
+        manifest: &Manifest,
+        signed_manifest_bytes: &[u8],
+        package_digest: &str,
+        executable_path: &str,
+        executable_bytes: &[u8],
+        publisher_fingerprint: Option<String>,
+        source_identity: Option<ProviderSourceIdentity>,
+    ) -> Result<Self, ProviderPolicyError> {
         let signed_manifest: Manifest =
-            serde_json::from_str(artifact.signed_manifest()).map_err(|_| {
+            serde_json::from_slice(signed_manifest_bytes).map_err(|_| {
                 ProviderPolicyError::InvalidManifest(
-                    "verified archive artifact has invalid manifest bytes".to_owned(),
+                    "verified provider artifact has invalid manifest bytes".to_owned(),
                 )
             })?;
-        if artifact.executable_path() != executable.path
-            || digest_hex(artifact.executable_bytes()) != executable.sha256
+        if executable_path != manifest.package.executable.path
+            || digest_hex(executable_bytes) != manifest.package.executable.sha256
             || signed_manifest != *manifest
-            || artifact.archive_digest().len() != 64
-            || !artifact
-                .archive_digest()
+            || package_digest.len() != 64
+            || !package_digest
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
         {
             return Err(ProviderPolicyError::InvalidManifest(
-                "verified archive artifact is internally inconsistent".to_owned(),
+                "verified provider artifact is internally inconsistent".to_owned(),
             ));
         }
-        manifest
-            .validate()
-            .map_err(|error| ProviderPolicyError::InvalidManifest(error.to_string()))?;
-        let archive_digest = artifact.archive_digest();
-        let manifest_digest = digest_hex(artifact.signed_manifest().as_bytes());
+        if source_identity.is_some() {
+            manifest
+                .validate_source()
+                .map_err(|error| ProviderPolicyError::InvalidManifest(error.to_string()))?;
+        } else {
+            manifest
+                .validate()
+                .map_err(|error| ProviderPolicyError::InvalidManifest(error.to_string()))?;
+        }
+        let manifest_digest = digest_hex(signed_manifest_bytes);
         Ok(Self {
             provider_id: manifest.provider_id.clone(),
-            archive_digest: archive_digest.to_owned(),
+            archive_digest: package_digest.to_owned(),
             manifest_digest,
-            publisher_fingerprint: manifest.publisher.fingerprint.clone(),
+            publisher_fingerprint,
             executable_sha256: manifest.package.executable.sha256.clone(),
-            capabilities: ProviderCapabilitySet::from_manifest(manifest, archive_digest)?,
+            capabilities: ProviderCapabilitySet::from_manifest(manifest, package_digest)?,
+            source_identity,
         })
     }
 
@@ -224,18 +302,35 @@ impl ProviderApprovalTuple {
         &self.archive_digest
     }
 
+    pub fn package_digest(&self) -> &str {
+        &self.archive_digest
+    }
+
+    pub fn content_digest(&self) -> &str {
+        &self.archive_digest
+    }
+
     pub fn manifest_digest(&self) -> &str {
         &self.manifest_digest
+    }
+
+    pub fn publisher_fingerprint(&self) -> Option<&str> {
+        self.publisher_fingerprint.as_deref()
     }
 
     pub fn capabilities(&self) -> &ProviderCapabilitySet {
         &self.capabilities
     }
+
+    pub fn source_identity(&self) -> Option<&ProviderSourceIdentity> {
+        self.source_identity.as_ref()
+    }
 }
 
 /// Explicit approval is an exact tuple match. Runtime declarations may then
-/// be a strict subset, but a different archive, manifest, publisher,
-/// executable, or capability set must not silently inherit approval.
+/// be a strict subset, but a different artifact identity, source pin,
+/// manifest, publisher, executable, or capability set must not silently
+/// inherit approval.
 pub fn compare_approval_tuple(
     approved: &ProviderApprovalTuple,
     candidate: &ProviderApprovalTuple,
@@ -253,11 +348,6 @@ pub fn compare_approval_tuple(
             &candidate.manifest_digest,
         ),
         (
-            "publisher_fingerprint",
-            &approved.publisher_fingerprint,
-            &candidate.publisher_fingerprint,
-        ),
-        (
             "executable_sha256",
             &approved.executable_sha256,
             &candidate.executable_sha256,
@@ -266,6 +356,16 @@ pub fn compare_approval_tuple(
         if expected != actual {
             return Err(ProviderPolicyError::ApprovalMismatch { field });
         }
+    }
+    if approved.publisher_fingerprint != candidate.publisher_fingerprint {
+        return Err(ProviderPolicyError::ApprovalMismatch {
+            field: "publisher_fingerprint",
+        });
+    }
+    if approved.source_identity != candidate.source_identity {
+        return Err(ProviderPolicyError::ApprovalMismatch {
+            field: "source_identity",
+        });
     }
     if approved.capabilities != candidate.capabilities {
         return Err(ProviderPolicyError::ApprovalMismatch {
@@ -645,6 +745,65 @@ mod tests {
         );
         assert_eq!(artifact.executable_path(), "bin/provider");
         assert_eq!(artifact.executable_bytes(), &[0_u8]);
+    }
+
+    #[test]
+    fn source_approval_identity_includes_pinned_source_and_content_authority() {
+        let source_digest = "a".repeat(64);
+        let provider_id = "source-fixture";
+        let source_identity = ProviderSourceIdentity {
+            canonical_git_url: "https://example.com/gorce/provider".to_owned(),
+            commit_hash_algorithm: GitHashAlgorithm::Sha1,
+            resolved_commit: "b".repeat(40),
+            source_content_digest_algorithm: gorce_provider_abi::SOURCE_CONTENT_DIGEST_ALGORITHM,
+        };
+        let tool_id = derive_tool_id(&source_digest, provider_id, "web_search");
+        let mut capabilities = ProviderCapabilitySet::default();
+        capabilities.tool_ids.insert(tool_id.clone());
+        let approval = ProviderApprovalTuple {
+            provider_id: provider_id.to_owned(),
+            archive_digest: source_digest.clone(),
+            manifest_digest: "c".repeat(64),
+            publisher_fingerprint: None,
+            executable_sha256: "d".repeat(64),
+            capabilities,
+            source_identity: Some(source_identity.clone()),
+        };
+        assert_eq!(approval.package_digest(), source_digest);
+        assert_eq!(approval.archive_digest(), source_digest);
+        assert_eq!(approval.publisher_fingerprint(), None);
+        let identity = approval.source_identity().unwrap();
+        assert_eq!(
+            identity.canonical_git_url(),
+            source_identity.canonical_git_url()
+        );
+        assert_eq!(
+            identity.commit_hash_algorithm(),
+            source_identity.commit_hash_algorithm()
+        );
+        assert_eq!(
+            identity.resolved_commit(),
+            source_identity.resolved_commit()
+        );
+        assert_eq!(
+            identity.source_content_digest_algorithm(),
+            gorce_provider_abi::SOURCE_CONTENT_DIGEST_ALGORITHM
+        );
+        assert!(approval.capabilities().tool_ids.contains(&tool_id));
+
+        let mut substituted = approval.clone();
+        substituted.source_identity = Some(ProviderSourceIdentity {
+            canonical_git_url: "https://example.com/other/provider".to_owned(),
+            commit_hash_algorithm: identity.commit_hash_algorithm(),
+            resolved_commit: identity.resolved_commit().to_owned(),
+            source_content_digest_algorithm: identity.source_content_digest_algorithm(),
+        });
+        assert!(matches!(
+            compare_approval_tuple(&approval, &substituted),
+            Err(ProviderPolicyError::ApprovalMismatch {
+                field: "source_identity"
+            })
+        ));
     }
 
     #[test]

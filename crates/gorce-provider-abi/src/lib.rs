@@ -7,6 +7,7 @@
 mod manifest;
 mod rpc;
 mod signing;
+mod source;
 mod validation;
 
 pub use manifest::{
@@ -32,6 +33,11 @@ pub use signing::{
     verify_provider_archive, DetachedSignature, SignatureAlgorithm, SignatureError,
     SignedProviderPackage, VerifiedProviderArchive, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES,
     MAX_ARCHIVE_UNCOMPRESSED_BYTES, PROVIDER_ARCHIVE_EXTENSION, RESERVED_ARCHIVE_ENTRIES,
+};
+pub use source::{
+    verify_provider_source, GitHashAlgorithm, PinnedGitSource, ResolverOwnedGitSnapshot,
+    SourceVerificationError, VerifiedProviderSource, VerifiedSourceFile, MAX_SOURCE_FILES,
+    MAX_SOURCE_FILE_SIZE_BYTES, MAX_SOURCE_TOTAL_BYTES, SOURCE_CONTENT_DIGEST_ALGORITHM,
 };
 pub use validation::{
     validate_json_value, validate_local_schema, ValidationError, ValidationResult,

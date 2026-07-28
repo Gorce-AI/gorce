@@ -6,6 +6,11 @@
 - Daemon-client authorization material.
 - `.gorce-provider` archive bytes, archive digest, exact manifest bytes,
   detached signature, publisher fingerprint, file table, and executable hash.
+- Resolver-supplied pinned Git source identity, commit hash algorithm and full
+  commit, exact neutral source manifest bytes, resolver-supplied `manifest_mode`
+  regular Git mode for `manifest.json`, resolver-owned entries and modes, source
+  content digest, manifest digest, full source approval identity, and opaque
+  `VerifiedProviderSource` proof views.
 - Provider API keys, OAuth state/verifiers, access tokens, and refresh tokens.
 - Approved provider capability sets, tool schemas, invocation bindings, and
   operation deadlines.
@@ -16,14 +21,16 @@
 
 - The daemon process and its configured filesystem root.
 - Daemon clients and the separate provider-process ABI.
-- Package archive verification and explicit approval.
+- Package archive/source verification and explicit approval policy.
 - The future daemon-owned package host/broker and the provider process it
-  launches. This is planned for Phase 2, not a current runtime component.
+  launches. This is not a current runtime component.
 - Future host-delivered secrets and the trusted provider process that receives
   them.
-- Phase 2 pinned Git source resolution, immutable content digest, and the
-  daemon-global provider data root.
-- Phase 2 daemon-owned loopback OAuth state, callback, refresh, and recovery.
+- The sealed resolver-to-verifier boundary for a Phase 2 pinned Git source
+  snapshot, entries, and declared digest; Git transport and source resolution
+  are not current runtime components.
+- Future daemon-global provider data and daemon-owned loopback OAuth state,
+  callback, refresh, and recovery.
 - Build and release automation.
 
 ## Threats
@@ -31,10 +38,12 @@
 - An unauthorized local or remote daemon client reads or changes data.
 - Path traversal, duplicate entries, archive expansion, or symlink-like archive
   behavior escapes the intended package or storage root.
-- A changed archive, manifest, publisher, executable, capability, tool policy,
-  or schema inherits an old approval.
-- A moving Git ref, changed resolved commit, content-digest mismatch, partial
-  materialization, or project-local source path becomes launch authority.
+- A changed archive/source snapshot, neutral manifest, source mode, executable,
+  capability, tool policy, or schema inherits an old approval.
+- A moving Git ref, abbreviated or changed resolved commit, content-digest
+  mismatch, substituted manifest/file/executable, unsafe source path, case
+  collision, partial materialization, or project-local source path becomes
+  launch authority.
 - A circular or independently computed archive digest fails to prove that the
   spawned executable belongs to the signed archive.
 - An attacker sends oversized, malformed, CR-terminated, unterminated, out of
@@ -47,8 +56,9 @@
 - A caller-supplied authorization claim or absent/mismatched delivery releases
   a secret to the wrong operation.
 - A trusted provider copies or exfiltrates a delivered API key or access token.
-- An explicitly installed same-user package is mistaken for a sandbox or an
-  official/publisher-authenticated package.
+- An explicitly approved same-user package is mistaken for a sandbox or an
+  official/publisher-authenticated package; an unsigned source proof is
+  mistaken for publisher authenticity.
 - A noncanonical, non-HTTPS, unapproved, or DNS-confused OAuth endpoint or
   origin causes credential disclosure or authorization confusion.
 - OAuth state, PKCE verifier, authorization code, access token, refresh token,
@@ -76,10 +86,10 @@ mode; missing-mode, symlink, directory, and other non-regular entries are
 rejected before file binding. The
 archive has at most 130 entries: 128 manifest file-table
 entries plus reserved `manifest.json` and `signature.json`. Uncompressed archive
-content is bounded to 268,701,696 bytes. The sole launch-authorizing path
-verifies raw archive bytes with `verify_provider_archive`, and approval is
-derived only from its opaque `VerifiedProviderArchive` artifact. Its fields are
-private, it is `#[non_exhaustive]`, and downstream crates can only use its
+content is bounded to 268,701,696 bytes. The Phase 1 archive regression path
+verifies raw archive bytes with `verify_provider_archive`, and archive approval
+is derived only from its opaque `VerifiedProviderArchive` artifact. Its fields
+are private, it is `#[non_exhaustive]`, and downstream crates can only use its
 read-only getters (`package()`, `manifest()`, `archive_digest()`,
 `signed_manifest()`, `signature()`, `executable_path()`, and
 `executable_bytes()`); they cannot forge it by struct literal. The verifier
@@ -87,30 +97,66 @@ computes the lower-case SHA-256 archive digest, reads the exact manifest and
 detached signature from that archive, verifies the Ed25519 signature and
 publisher fingerprint, checks the file table, and exposes the verified
 executable bytes through that getter view. The manifest is bounded to 256 KiB
-and does not contain the archive digest.
+and does not contain the archive digest. This path is retained only for Phase 1
+regression/conformance evidence, not as a current launch authority. Its
+publisher/signature requirement remains mandatory for signed archives; source
+manifests use the separate neutral contract and source-bound modes.
 
-The approval record is an exact `ProviderApprovalTuple`: provider ID, archive
-digest, manifest digest, publisher fingerprint, executable SHA-256, and the
-complete capability set. The capability set includes authentication policies,
-digest-bound tool IDs and policies, credential classes, origins, side effects,
-and tool credential bindings. A changed member requires renewed approval.
+The signed-archive approval record is an exact `ProviderApprovalTuple`:
+provider ID, archive digest, manifest digest, publisher fingerprint, executable
+SHA-256, and the complete capability set. The capability set includes
+authentication policies, digest-bound tool IDs and policies, credential
+classes, origins, side effects, and tool credential bindings. A changed member
+requires renewed approval; the unsigned source variant omits publisher identity,
+uses its source content digest as the package digest, and compares its full
+source identity separately.
 
-The signed-archive controls above describe the current Phase 1 implementation.
-The bounded Phase 2 target in ADR 0005 supersedes that launch authority for
-provider-install V1: installation must be explicitly requested from a pinned
-canonical Git URL, resolved to an immutable full commit and source content
-digest. V1 has no publisher or official signature, marketplace, direct HTTPS
-archive, or local-path source authority. The daemon stores the immutable record
-and verified source snapshot in a durable daemon-global provider data root,
-materializes it through staging and an atomic commit, and never launches a
-partially materialized source. It starts one fresh provider process per
-invocation rather than pooling or reusing processes.
+The narrow Phase 2 source proof in ADR 0005 accepts a `PinnedGitSource` with a
+canonical ASCII HTTPS Git URL, `sha1` or `sha256` commit hash algorithm, and a
+full lower-case immutable commit. Query/fragment/userinfo, encoded or
+backslash-normalized authorities, noncanonical hosts/ports, moving refs,
+abbreviated commits, local paths, and direct archive URLs are rejected. The
+proof does not perform Git network transport, clone/fetch, or ref resolution.
 
-The Phase 2 daemon owns loopback OAuth PKCE, callback/state validation,
-authorization-code exchange, refresh-token storage, expiry/revocation handling,
-and crash/restart recovery. An explicitly installed same-user package remains
-trusted user code, not a sandbox or an official publisher package; process
-freshness, source immutability, and OAuth mediation do not provide sandboxing.
+Only resolver code can construct the sealed `ResolverOwnedGitSnapshot`, its
+`ResolverSourceEntry` values, its `manifest_mode` Git mode for `manifest.json`,
+or the declared source digest. The verifier returns the opaque, resolver-owned,
+`#[non_exhaustive]` `VerifiedProviderSource` only after checking that snapshot.
+The neutral source manifest has no publisher or detached-signature authority;
+its source-only file table does carry per-file modes, while a publisher key is
+rejected rather than treated as optional source identity.
+
+Source entries are bounded to 128 files, 64 MiB each, and 256 MiB total. The
+separate `manifest.json` envelope entry must have the resolver-supplied regular
+Git mode, which is included in the `sha256:gorce.provider/source-content/v1`
+digest. Every source entry must be a regular file with an explicit regular
+Unix mode. Symlinks, Gitlinks, directories, special entries, unsafe paths,
+reserved envelope names, and case-fold collisions are rejected. Per-file path,
+size, SHA-256, and source-only mode values must exactly match the source
+manifest file table. Those mode fields are not signed-archive manifest fields:
+the strict signed archive manifest rejects them. Source-file mode-only
+substitutions are rejected and alter the source digest; changing the separate
+`manifest.json` Git mode also changes it. The manifest executable path, size,
+hash, and bytes must bind to that exact file.
+
+Source approval uses the source content digest as the package/content digest
+(the shared `archive_digest` slot), plus provider ID, exact manifest digest,
+executable SHA-256, complete capabilities, and the full source identity:
+canonical URL, commit hash algorithm, full commit, and source-content digest
+algorithm. `publisher_fingerprint` is absent; no publisher or official
+signature is verified.
+
+The source schema, neutral source-manifest schema, and shared
+`source-fixtures.json` positive, negative, and UTF-8 byte-bound cases execute
+across Rust source verification, JSON Schema validation, and Python semantic
+contract checks. Provider parity fixtures are additional cross-checks. They
+are proof/parity evidence, not Git transport or host implementation.
+
+The source proof is not an installer or host. Provider registry, persistence or
+recovery, staging/materialization, executable launch, process supervision,
+daemon routes, and OAuth callback, exchange, and token state are not
+implemented. A future explicitly approved same-user package remains trusted
+user code, not a sandbox or an official publisher package.
 
 The wire boundary is strict `gorce.provider/v1` JSON-RPC 2.0 LF-NDJSON. There
 is exactly one first `gorce.initialize` request, followed only by
@@ -125,8 +171,9 @@ encoded and checked under the negotiated `HostLimits`, including worker
 terminal messages and malformed-frame, cancel, timeout, busy, and shutdown
 errors; no response falls back to the ABI maximum.
 
-The host-derived tool ID includes the installed archive digest. Each manifest
-tool binds both an auth method ID and credential class, or binds neither;
+The host-derived tool ID includes the installed package digest: an archive
+digest on the Phase 1 path or a source content digest on the source-proof path.
+Each manifest tool binds both an auth method ID and credential class, or binds neither;
 credential classes map one-to-one to declared auth methods. Initialization
 runtime descriptors and capabilities must exactly match the approved manifest;
 credential-required tools cannot use an all-null
@@ -186,7 +233,7 @@ backslash-normalized text; explicit ports are non-zero decimal u16 values
 without leading zeroes, and explicit `:443` is noncanonical while `:80` is
 accepted. It may put an API
 key or access token in `tool.invoke` only when
-the host-authoritative `AuthorizedInvocation` matches package/archive digest,
+the host-authoritative `AuthorizedInvocation` matches the package digest,
 digest-bound tool, invocation ID, auth method ID, credential class, delivery
 kind, and deadline. Credentialed tools require a matching delivery; uncredentialed
 tools reject credential fields. Delivery values are copyable, at most 4,096
@@ -235,9 +282,11 @@ non-success/no-response path, and checks sentinel non-disclosure. This is test
 harness supervision; the package host/process supervisor is not implemented
 yet.
 
-Phase 1 stops before the registry, package host/broker, protected credential
-persistence, network OAuth exchange/callback, daemon provider routes, SDK/TUI
-surfaces, authoring surfaces, or integration evidence. Those are Phase 2/3
-boundaries. The trusted-after-approval model is explicitly not a sandbox; an
-untrusted package mode requires separate cross-platform sandboxing and/or a
-host-mediated HTTP proxy review.
+The narrow Phase 2 implementation stops at resolver-snapshot source proof and
+source-based approval derivation. Git network transport, registry, package
+host/broker, provider persistence, source materialization, executable launch,
+protected credential persistence, network OAuth exchange/callback, daemon
+provider routes, SDK/TUI surfaces, authoring surfaces, and integration evidence
+remain unimplemented Phase 2/3 boundaries. The trusted-after-approval model is
+explicitly not a sandbox; an untrusted package mode requires separate
+cross-platform sandboxing and/or a host-mediated HTTP proxy review.

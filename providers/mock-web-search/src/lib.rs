@@ -38,10 +38,10 @@ pub fn manifest_for_executable(executable_bytes: &[u8]) -> Manifest {
         provider_id: PROVIDER_ID.to_owned(),
         display_name: "Deterministic Mock Web Search".to_owned(),
         version: "1.0.0".to_owned(),
-        publisher: PackagePublisher {
+        publisher: Some(PackagePublisher {
             name: "Gorce ABI fixture".to_owned(),
             fingerprint: fingerprint_hex(&public_key),
-        },
+        }),
         package: ManifestPackage {
             files: vec![PackageFile {
                 path: EXECUTABLE_PATH.to_owned(),
