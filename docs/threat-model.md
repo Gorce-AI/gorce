@@ -1,5 +1,15 @@
 # Threat model
 
+> **Phase 1 status — representation-only V2 lane.** The narrow
+> representation-only V2 schema/auth contract is the current Phase 1 V2
+> contract. All V1 behavior remains frozen. Existing V1 core policy,
+> source/archive verification, and durable authority remain current; only V2
+> integration into those systems is deferred. Runtime execution, provider
+> runtime, daemon/public APIs,
+> cache/materialization, CLI policy/version/argv/env/cwd,
+> login/status/diagnostics, budgets, and TUI remain deferred. This lane does
+> not provide runtime authorization or execute CLI adapters.
+
 ## Assets
 
 - User data in the storage root.
@@ -130,10 +140,11 @@ computes the lower-case SHA-256 archive digest, reads the exact manifest and
 detached signature from that archive, verifies the Ed25519 signature and
 publisher fingerprint, checks the file table, and exposes the verified
 executable bytes through that getter view. The manifest is bounded to 256 KiB
-and does not contain the archive digest. This path is retained only for Phase 1
-regression/conformance evidence, not as a current launch authority. Its
-publisher/signature requirement remains mandatory for signed archives; source
-manifests use the separate neutral contract and source-bound modes.
+and does not contain the archive digest. This is the current frozen V1
+source/archive-verification path, not V2 integration or a provider launch
+authority. Its publisher/signature requirement remains mandatory for signed
+archives; source manifests use the separate neutral contract and source-bound
+modes.
 
 The signed-archive approval record is an exact `ProviderApprovalTuple`:
 provider ID, archive digest, manifest digest, publisher fingerprint, executable
@@ -144,12 +155,14 @@ requires renewed approval; the unsigned source variant omits publisher identity,
 uses its source content digest as the package digest, and compares its full
 source identity separately.
 
-The narrow Phase 2 source proof in ADR 0005 accepts a `PinnedGitSource` with a
-canonical ASCII HTTPS Git URL, `sha1` or `sha256` commit hash algorithm, and a
-full lower-case immutable commit. Query/fragment/userinfo, encoded or
-backslash-normalized authorities, noncanonical hosts/ports, moving refs,
-abbreviated commits, local paths, and direct archive URLs are rejected. The
-proof does not perform Git network transport, clone/fetch, or ref resolution.
+The narrow Phase 2 source proof in ADR 0005 validates a `PinnedGitSource` with
+a canonical ASCII HTTPS Git URL, `sha1` or `sha256` commit hash algorithm, and
+a full lower-case immutable commit. This current source/archive verification is
+not Git transport, provider hosting, or V2 runtime integration.
+Query/fragment/userinfo, encoded or backslash-normalized authorities,
+noncanonical hosts/ports, moving refs, abbreviated commits, local paths, and
+direct archive URLs are rejected. The proof does not perform Git network
+transport, clone/fetch, or ref resolution.
 
 Only resolver code can construct the sealed `ResolverOwnedGitSnapshot`, its
 `ResolverSourceEntry` values, its `manifest_mode` Git mode for `manifest.json`,
@@ -182,8 +195,9 @@ signature is verified.
 The source schema, neutral source-manifest schema, and shared
 `source-fixtures.json` positive, negative, and UTF-8 byte-bound cases execute
 across Rust source verification, JSON Schema validation, and Python semantic
-contract checks. Provider parity fixtures are additional cross-checks. They
-are proof/parity evidence, not Git transport or host implementation.
+contract checks. Provider parity fixtures are additional cross-checks for this
+current source contract. They do not provide Git transport or host
+implementation.
 
 The source proof is not an installer or host. Provider staging/materialization,
 executable launch, process supervision, daemon routes, and OAuth callback,
@@ -207,14 +221,16 @@ are reported separately; Windows does not claim Unix directory-fsync
 equivalence. This storage contract is a current runtime implementation, but it
 does not provide installation, source transport, or provider hosting.
 
-ADR 0007 is the user-approved provider-runtime Phase 0 architectural boundary,
-not runtime evidence; its Oracle documentation gate remains pending. V1 remains
-frozen; a future V2 may use only the explicit
-`none`, `host_secret`, or `official_cli_session` tags. The official-CLI tag
-names a closed host policy and has no credential class or secret delivery.
-Gorce must not own vendor OAuth, tokens, refresh, credential parsing, files, or
-profiles. Codex and Claude Code remain external official CLIs invoked by Gorce
-adapter packages, not official vendor providers.
+ADR 0007 preserves the user-approved provider-runtime Phase 0 architectural
+boundary and its historical stop lines; it is not runtime evidence. The
+current Phase 1 lane implements only the representation-only V2 schema/auth
+contract. V1 remains frozen. The explicit `none`, `host_secret`, and
+`official_cli_session` tags are representation, not runtime authorization or
+credential delivery. The official-CLI tag names a deferred closed host policy
+and has no credential class or secret delivery. Gorce must not own vendor OAuth,
+tokens, refresh, credential parsing, files, or profiles. Codex and Claude Code
+remain external official CLIs described for future Gorce adapter packages, not
+official vendor providers or current executions.
 
 The future authority chain is opaque verified source -> source approval and
 `approval_id` -> separately revalidated `provider_cache_root` bytes ->
@@ -368,13 +384,16 @@ non-success/no-response path, and checks sentinel non-disclosure. This is test
 harness supervision; the package host/process supervisor is not implemented
 yet.
 
-The narrow Phase 2 implementation stops at resolver-snapshot source proof, the
-storage-only approval registry contract, and Phase 0 provider-runtime
-documentation. V2 implementation, CLI adapters, provider cache/materialization,
-Git network transport, executable launch/process lifecycle, protected
-credentials, OAuth exchange/callback/token state, package host/broker, daemon
-install or provider routes, SDK/TUI/client surfaces, authoring surfaces, and
-integration evidence remain unimplemented Phase 2/3 boundaries. No operator
-login is permitted at this phase. The trusted-after-approval model is
-explicitly not a sandbox; an untrusted package mode requires separate
-cross-platform sandboxing and/or a host-mediated HTTP proxy review.
+The narrow Phase 2 implementation includes resolver-snapshot source-proof
+verification and the storage-only approval registry contract. The current Phase
+1 V2 scope is representation-only; V2 integration with source/archive
+verification, approval/lease policy, and durable authority, plus CLI adapters,
+provider cache/materialization, Git network transport, executable
+launch/process lifecycle, protected credentials, OAuth exchange/callback/token
+state, package host/broker, daemon install or provider routes,
+login/status/diagnostics, budgets, SDK/TUI/client surfaces, authoring surfaces,
+and integration evidence remain deferred Phase 2/3 boundaries. No operator
+login is permitted at this phase. The
+trusted-after-approval model is explicitly not a sandbox; an untrusted package
+mode requires separate cross-platform sandboxing and/or a host-mediated HTTP
+proxy review.

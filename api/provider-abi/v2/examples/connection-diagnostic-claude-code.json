@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": "diagnostic-claude",
+  "method": "connection_diagnostic",
+  "params": {
+    "provider_id": "claude-code",
+    "policy_id": "gorce.official-cli/claude-code/v1"
+  }
+}

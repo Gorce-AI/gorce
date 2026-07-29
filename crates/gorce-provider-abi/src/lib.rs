@@ -8,6 +8,7 @@ mod manifest;
 mod rpc;
 mod signing;
 mod source;
+pub mod v2;
 mod validation;
 
 pub use manifest::{

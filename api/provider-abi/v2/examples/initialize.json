@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "id": "init-v2",
+  "method": "gorce.initialize",
+  "params": {
+    "version_range": {
+      "minimum": "gorce.provider/v2",
+      "maximum": "gorce.provider/v2"
+    },
+    "limits": {
+      "max_frame_bytes": 65536,
+      "max_json_depth": 16,
+      "max_members": 256,
+      "max_timeout_ms": 120000
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": "diagnostic-codex",
+  "method": "connection_diagnostic",
+  "params": {
+    "provider_id": "codex",
+    "policy_id": "gorce.official-cli/codex/v1"
+  }
+}

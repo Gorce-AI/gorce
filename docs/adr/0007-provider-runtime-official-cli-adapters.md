@@ -1,10 +1,19 @@
 # ADR 0007: Phase 0 provider runtime and official CLI adapters
 
-- Status: User-approved architectural boundary; Phase 0 Oracle documentation
-  gate pending
+- Status: User-approved architectural boundary; historical Phase 0 stop-line;
+  Phase 1 representation-only V2 schema/auth contract defined
 - Date: 2026-07-28
 - Scope: Provider-runtime boundaries, official CLI adapter policy, and phase
   stop lines only
+
+> **Current Phase 1 status.** The narrow representation-only V2 schema/auth
+> contract is the current Phase 1 V2 contract. All V1 behavior remains frozen.
+> Existing V1 core policy, source/archive verification, and durable authority
+> remain current; only V2 integration into those systems is deferred. Runtime
+> execution, provider runtime, daemon/public APIs, cache/materialization,
+> CLI policy/version/argv/env/cwd,
+> login/status/diagnostics, budgets, and TUI remain deferred. This lane does
+> not provide runtime authorization or execute CLI adapters.
 
 ## Context
 
@@ -14,13 +23,14 @@ and Claude Code are not new vendor providers owned by Gorce. They are possible
 Gorce adapter packages which may invoke the user's separately installed
 official CLIs after later approval gates.
 
-The user approved the Phase 0 architectural boundary only. The Phase 0 slice is
-documentation only and still requires the Oracle documentation gate. Concrete
-catalog pins, supported version ranges, command policies, cache/platform
-choices, diagnostic limits, and warning copy are deliberately not approved by
-this ADR. It must prevent a runtime implementation from accidentally adding
-vendor OAuth, token handling, broad provider execution, cache authority, or a
-sandbox claim before those decisions are separately reviewed.
+The user approved the Phase 0 architectural boundary only. That historical
+Phase 0 slice was documentation-only and stopped before runtime implementation.
+This Phase 1 lane is limited to the representation-only V2 schema/auth
+contract. Concrete catalog pins, supported version ranges, command policies,
+cache/platform choices, diagnostic limits, and warning copy remain deferred.
+This ADR must prevent a runtime implementation from accidentally adding vendor
+OAuth, token handling, broad provider execution, cache authority, or a sandbox
+claim before those decisions are separately reviewed.
 
 ## Decision
 
@@ -30,8 +40,8 @@ sandbox claim before those decisions are separately reviewed.
 authentication fields, add an official-CLI auth method to V1, or change its
 wire methods, approval tuple, secret-delivery rules, or schema contracts.
 
-A future separately versioned V2 may replace ambiguous nullable combinations
-with one explicit tagged authentication binding:
+The current Phase 1 representation-only V2 schema/auth contract replaces
+ambiguous nullable combinations with one explicit tagged authentication binding:
 
 ```text
 none
@@ -39,12 +49,14 @@ host_secret
 official_cli_session
 ```
 
-The tags are a V2 concept, not an implemented V2 schema. `none` carries no
-credential. `host_secret` is a future host-mediated secret contract and is not
-a vendor OAuth or token-parsing path. `official_cli_session` names a future
-closed host CLI policy; it has no credential class, delivery kind, or
-secret-delivery field. A V2 implementation must reject unknown tags and must
-not silently translate a V1 field combination into an official CLI session.
+These tags are the representation-level V2 schema/auth contract in this lane;
+they do not authorize runtime execution, credential delivery, or CLI adapter
+execution. `none` carries no credential. `host_secret` is a deferred
+host-mediated secret contract and is not a vendor OAuth or token-parsing path.
+`official_cli_session` names a deferred closed host CLI policy; it has no
+credential class, delivery kind, or secret-delivery field. The representation
+contract must reject unknown tags and must not silently translate a V1 field
+combination into an official CLI session.
 
 Gorce does not own Codex or Claude Code OAuth, access tokens, refresh tokens,
 credential files, profile contents, token injection, vendor HTTP/API calls,
@@ -196,7 +208,7 @@ candidate command families above.
 | Deferred decision | Later value that must be recorded | Required gate |
 | --- | --- | --- |
 | Binary-bundle catalog | Exact repository URLs, full pins/digests, allowed adapter/platform bundle mapping, and publisher/unsigned-source treatment | Closed setup and source-approval gate |
-| V2 tagged authentication | Exact V2 wire/schema shape, versioning, `host_secret` semantics, and closed `official_cli_session` policy identifiers with forbidden fields | V2 parity and compatibility gate |
+| V2 runtime authentication | Runtime meaning and compatibility evidence beyond the representation-only V2 schema/auth contract, `host_secret` semantics, and closed `official_cli_session` policy identifiers with forbidden fields | V2 parity and compatibility gate |
 | CLI support | Exact Codex/Claude executable identity and supported version ranges | Fake-CLI policy gate |
 | Process invocation | Exact argv/flags, environment allowlist/scrubbing, cwd/profile handling, output mode, and auth/error mapping | Fake-CLI policy and one-shot-host gates |
 | Cache and containment | `provider_cache_root` layout/permissions, materialization/revalidation rules, platform assumptions, process-tree containment, and reap behavior | Cache/authority and one-shot-host gates |
@@ -212,8 +224,9 @@ operator login by itself.
 
 ### 8. Login gate and phase acceptance
 
-No operator login is requested or permitted in Phase 0. Login remains blocked
-until all of the following receive separate review and approval:
+No operator login is requested or permitted in the historical Phase 0 boundary
+or the current Phase 1 representation lane. Login remains blocked until all of
+the following receive separate review and approval:
 
 - the signed-off versioned V2 tagged-auth policy and compatibility evidence;
 - sealed source authority, human approval, fail-closed materialization, and
@@ -227,12 +240,15 @@ until all of the following receive separate review and approval:
 - a later admission redesign if any capability beyond fixed diagnostics is
   proposed.
 
-Phase 0 user acceptance covers only the architectural boundary and this
-deferred-decision record. The Phase 0 Oracle documentation gate is still
-pending. Phase 0 stops before V2 code, CLI process execution, cache
+Historical Phase 0 user acceptance covered only the architectural boundary and
+this deferred-decision record; its stop line remains in force. Phase 1 defines
+only the narrow representation-only V2 schema/auth contract and still stops
+before runtime authorization, V2 integration with source/archive verification,
+approval/lease policy, and durable authority, CLI process execution, cache
 materialization, vendor authentication, public routes, SDK/TUI provider
-surfaces, or general execution. A later phase must pass its named signoff gate
-and real-execution gate; Phase 0 documentation is not runtime evidence.
+surfaces, budgets, or general execution. A later phase must pass its named
+signoff gate and real-execution gate; the Phase 1 representation contract is
+not runtime evidence.
 
 ## Consequences and stop lines
 
@@ -242,9 +258,12 @@ keeps diagnostic evidence separate from general execution authority. The cost
 is deliberate: no live provider login, broad invocation, or public result
 surface can be added by convenience or by reusing nullable V1 fields.
 
-This ADR does **not** implement a V2 ABI, a provider runtime, a CLI adapter, a
-cache, source materialization, Git transport, provider launch, process
-supervision, credentials, OAuth, login/status routes, SDK/TUI models, or a
-general admissions system. It does not make Codex or Claude Code official
-Gorce providers and does not create a sandbox. Those are later, separately
-approved decisions.
+This ADR does **not** implement V2 runtime authorization, V2 integration with
+source/archive verification, approval or lease policy, or durable authority; a
+provider runtime, CLI adapter, cache, source materialization, Git transport,
+provider launch, process supervision, credentials, OAuth, login/status/
+diagnostic routes, budgets, SDK/TUI models, and a general admissions system
+also remain deferred. Its only current V2 scope is the representation-only
+schema/auth contract. It does not make Codex or Claude Code official Gorce
+providers and does not create a sandbox. Those are later, separately approved
+decisions.

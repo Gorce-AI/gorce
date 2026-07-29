@@ -18,6 +18,12 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_DIR = ROOT / "api" / "schemas"
 EXAMPLE_DIR = ROOT / "api" / "examples"
 PROVIDER_SCHEMA_DIR = ROOT / "api" / "provider-abi" / "v1"
+PROVIDER_V1_SCHEMA_DIR = PROVIDER_SCHEMA_DIR
+PROVIDER_V2_SCHEMA_DIR = ROOT / "api" / "provider-abi" / "v2"
+PROVIDER_SCHEMA_ROOTS = {
+    "v1": PROVIDER_V1_SCHEMA_DIR,
+    "v2": PROVIDER_V2_SCHEMA_DIR,
+}
 NEGATIVE_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 MAX_EVENT_COUNT = 1024
 MAX_EVENT_DATA_BYTES = 1_048_576
@@ -34,6 +40,12 @@ SCHEMAS_BY_ID.update(
     {
         json.loads(path.read_text())["$id"]: json.loads(path.read_text())
         for path in PROVIDER_SCHEMA_DIR.glob("*.schema.json")
+    }
+)
+SCHEMAS_BY_ID.update(
+    {
+        json.loads(path.read_text())["$id"]: json.loads(path.read_text())
+        for path in PROVIDER_V2_SCHEMA_DIR.glob("*.schema.json")
     }
 )
 
@@ -134,6 +146,14 @@ def validate(value, schema, path="$", root=None):
                 raise SchemaViolation(f"{path}: anyOf failed")
             if keyword == "oneOf" and matches != 1:
                 raise SchemaViolation(f"{path}: oneOf failed")
+
+    if "not" in schema:
+        try:
+            validate(value, schema["not"], path, root)
+        except SchemaViolation:
+            pass
+        else:
+            raise SchemaViolation(f"{path}: not failed")
 
     condition = schema.get("if")
     if condition is not None:
@@ -773,6 +793,263 @@ def validate_provider_rpc_contract(value):
             if not isinstance(error.get("message"), str) or not 1 <= len(error["message"]) <= 512:
                 raise SchemaViolation("provider error messages are bounded")
             validate_provider_byte_string(error["message"], 512, "error message")
+
+
+V2_POLICY_IDS = {
+    "gorce.official-cli/codex/v1",
+    "gorce.official-cli/claude-code/v1",
+}
+V2_AUTH_KINDS = {"none", "host_secret", "official_cli_session"}
+V2_IDENTIFIER_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+V2_TOOL_ID_RE = re.compile(
+    r"gorce\.provider/v2/tool/([0-9a-f]{64})/"
+    r"([a-z0-9][a-z0-9._-]{0,63})/([a-z0-9][a-z0-9._-]{0,63})"
+)
+
+
+def load_v2_schema(name):
+    return json.loads((PROVIDER_V2_SCHEMA_DIR / name).read_text())
+
+
+def load_v2_example(name):
+    return json.loads((PROVIDER_V2_SCHEMA_DIR / "examples" / name).read_text())
+
+
+def validate_provider_v2_identifier(value, label):
+    if not isinstance(value, str) or V2_IDENTIFIER_RE.fullmatch(value) is None:
+        raise SchemaViolation(f"{label} is not a V2 lowercase identifier")
+
+
+def parse_provider_v2_tool_id(value):
+    match = V2_TOOL_ID_RE.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        raise SchemaViolation("V2 tool ID does not match the Rust identifier grammar")
+    return match.groups()
+
+
+def validate_provider_v2_authentication(value):
+    if not isinstance(value, dict) or set(value) - {
+        "kind",
+        "auth_method_id",
+        "credential_class",
+        "delivery_kind",
+        "policy_id",
+    }:
+        raise SchemaViolation("V2 authentication has unknown fields")
+    kind = value.get("kind")
+    if kind not in V2_AUTH_KINDS:
+        raise SchemaViolation("V2 authentication kind is not closed")
+    expected = {
+        "none": {"kind"},
+        "host_secret": {"kind", "auth_method_id", "credential_class", "delivery_kind"},
+        "official_cli_session": {"kind", "policy_id"},
+    }[kind]
+    if set(value) != expected:
+        raise SchemaViolation("V2 authentication fields do not match its tag")
+    if kind == "host_secret":
+        validate_provider_v2_identifier(value["auth_method_id"], "V2 auth method ID")
+        validate_provider_v2_identifier(value["credential_class"], "V2 credential class")
+        if value["delivery_kind"] not in {"api_key", "access_token"}:
+            raise SchemaViolation("V2 host-secret delivery kind is not closed")
+    if kind == "official_cli_session" and value["policy_id"] not in V2_POLICY_IDS:
+        raise SchemaViolation("V2 official CLI policy is not exact")
+
+
+def validate_provider_v2_manifest_contract(value):
+    if value["format"] != "gorce.provider/v2":
+        raise SchemaViolation("V2 manifest format is not independent from V1")
+    methods = value["auth_methods"]
+    if len(methods) > 8:
+        raise SchemaViolation("V2 host-secret auth methods exceed eight")
+    for method in methods:
+        validate_provider_v2_identifier(method["id"], "V2 auth method ID")
+        validate_provider_v2_identifier(method["credential_class"], "V2 credential class")
+    method_ids = [method["id"] for method in methods]
+    credential_classes = [method["credential_class"] for method in methods]
+    if len(set(method_ids)) != len(method_ids):
+        raise SchemaViolation("V2 auth method IDs must be unique")
+    if len(set(credential_classes)) != len(credential_classes):
+        raise SchemaViolation("V2 credential classes must map one-to-one")
+    capabilities = value["capabilities"]
+    if set(method_ids) != set(capabilities["auth_method_ids"]):
+        raise SchemaViolation("V2 auth capability set must equal declarations")
+    if set(credential_classes) != set(capabilities["credential_classes"]):
+        raise SchemaViolation("V2 credential capability set must equal declarations")
+    if any(policy not in V2_POLICY_IDS for policy in capabilities["official_cli_policy_ids"]):
+        raise SchemaViolation("V2 capability policy is not exact")
+
+    auth_by_id = {method["id"]: method for method in methods}
+    used_policies = set()
+    names = set()
+    for tool in value["tools"]:
+        if tool["name"] in names:
+            raise SchemaViolation("V2 tool names must be unique")
+        names.add(tool["name"])
+        authentication = tool["authentication"]
+        validate_provider_v2_authentication(authentication)
+        if authentication["kind"] == "host_secret":
+            method = auth_by_id.get(authentication["auth_method_id"])
+            if method is None:
+                raise SchemaViolation("V2 tool host-secret method is undeclared")
+            if (
+                method["credential_class"] != authentication["credential_class"]
+                or method["delivery_kind"] != authentication["delivery_kind"]
+            ):
+                raise SchemaViolation("V2 tool host-secret binding differs from its method")
+        elif authentication["kind"] == "official_cli_session":
+            policy = authentication["policy_id"]
+            used_policies.add(policy)
+            if policy not in capabilities["official_cli_policy_ids"]:
+                raise SchemaViolation("V2 tool policy is not capability-approved")
+    if used_policies != set(capabilities["official_cli_policy_ids"]):
+        raise SchemaViolation("V2 official CLI capability set must equal tool policies")
+
+
+def validate_provider_v2_initialize_result_contract(value):
+    if value["abi_version"] != "gorce.provider/v2":
+        raise SchemaViolation("V2 initialize result has the wrong ABI version")
+    digest = value["package_digest"]
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise SchemaViolation("V2 package digest is not lower-case SHA-256 hex")
+    for method_id in value["capabilities"]["auth_method_ids"]:
+        validate_provider_v2_identifier(method_id, "V2 runtime auth method ID")
+    for credential_class in value["capabilities"]["credential_classes"]:
+        validate_provider_v2_identifier(credential_class, "V2 runtime credential class")
+    for tool in value["tools"]:
+        validate_provider_v2_authentication(tool["authentication"])
+        tool_digest, _, _ = parse_provider_v2_tool_id(tool["tool_id"])
+        if tool_digest != digest:
+            raise SchemaViolation("V2 runtime tool ID is not independently digest-bound")
+    capabilities = value["capabilities"]
+    if any(policy not in V2_POLICY_IDS for policy in capabilities["official_cli_policy_ids"]):
+        raise SchemaViolation("V2 runtime policy capability is not exact")
+
+
+def validate_provider_v2_tool_invoke_params(params):
+    invocation = params["invocation"]
+    digest = invocation["package_digest"]
+    tool_digest, _, _ = parse_provider_v2_tool_id(invocation["tool_id"])
+    if tool_digest != digest:
+        raise SchemaViolation("V2 invocation tool ID is not digest-bound")
+    authentication = invocation["authentication"]
+    validate_provider_v2_authentication(authentication)
+    delivery = params.get("secret_delivery")
+    if authentication["kind"] == "host_secret":
+        if not isinstance(delivery, dict):
+            raise SchemaViolation("V2 host-secret invocation requires non-null delivery")
+        validate_provider_v2_identifier(delivery["auth_method_id"], "V2 delivery auth method ID")
+        validate_provider_v2_identifier(delivery["credential_class"], "V2 delivery credential class")
+        if (
+            delivery["auth_method_id"] != authentication["auth_method_id"]
+            or delivery["credential_class"] != authentication["credential_class"]
+            or delivery["kind"] != authentication["delivery_kind"]
+            or delivery["invocation_id"] != invocation["invocation_id"]
+        ):
+            raise SchemaViolation("V2 secret delivery scope does not match invocation")
+        if delivery["expires_at_unix_ms"] > invocation["deadline_unix_ms"]:
+            raise SchemaViolation("V2 secret delivery exceeds invocation deadline")
+        validate_provider_byte_string(delivery["value"], 4096, "V2 secret delivery")
+    elif "secret_delivery" in params:
+        raise SchemaViolation("V2 non-host-secret invocation cannot deliver a secret")
+
+
+def validate_provider_v2_rpc_contract(value):
+    if value.get("jsonrpc") != "2.0":
+        raise SchemaViolation("V2 RPC must use JSON-RPC 2.0")
+    method = value["method"]
+    params = value["params"]
+    if method == "gorce.initialize":
+        version_range = params["version_range"]
+        if version_range != {
+            "minimum": "gorce.provider/v2",
+            "maximum": "gorce.provider/v2",
+        }:
+            raise SchemaViolation("V2 initialize must negotiate only V2")
+        return
+    if method == "connection_diagnostic":
+        validate_provider_v2_identifier(params["provider_id"], "V2 diagnostic provider ID")
+        if params["policy_id"] not in V2_POLICY_IDS:
+            raise SchemaViolation("V2 diagnostic policy is not exact")
+        return
+    if method != "tool.invoke":
+        raise SchemaViolation("unknown V2 representation method")
+    validate_provider_v2_tool_invoke_params(params)
+
+
+def validate_provider_v2_runtime_against_manifest(runtime, manifest, digest):
+    validate_provider_v2_manifest_contract(manifest)
+    validate_provider_v2_initialize_result_contract(runtime)
+    if (
+        runtime["abi_version"] != "gorce.provider/v2"
+        or runtime["provider_id"] != manifest["provider_id"]
+        or runtime["package_digest"] != digest
+        or len(runtime["tools"]) != len(manifest["tools"])
+    ):
+        raise SchemaViolation("V2 runtime identity differs from the approved manifest")
+
+    expected_tools = {}
+    for declared in manifest["tools"]:
+        name = declared["name"]
+        tool_id = f"gorce.provider/v2/tool/{digest}/{manifest['provider_id']}/{name}"
+        expected_tools[tool_id] = {
+            "tool_id": tool_id,
+            "name": name,
+            "description": declared["description"],
+            "input_schema": declared["input_schema"],
+            "output_schema": declared["output_schema"],
+            "side_effects": declared["side_effects"],
+            "authentication": declared["authentication"],
+            "network_origins": declared["network_origins"],
+        }
+    actual_tools = {tool["tool_id"]: tool for tool in runtime["tools"]}
+    if len(actual_tools) != len(runtime["tools"]):
+        raise SchemaViolation("V2 runtime tools contain duplicate IDs")
+    if actual_tools != expected_tools:
+        raise SchemaViolation("V2 runtime descriptors differ from manifest tools")
+
+    side_effects = []
+    for tool in manifest["tools"]:
+        for effect in tool["side_effects"]:
+            if effect not in side_effects:
+                side_effects.append(effect)
+    expected_capabilities = {
+        "auth_method_ids": manifest["capabilities"]["auth_method_ids"],
+        "tool_ids": list(expected_tools),
+        "credential_classes": manifest["capabilities"]["credential_classes"],
+        "network_origins": manifest["capabilities"]["network_origins"],
+        "side_effects": side_effects,
+        "official_cli_policy_ids": manifest["capabilities"]["official_cli_policy_ids"],
+    }
+    if runtime["capabilities"] != expected_capabilities:
+        raise SchemaViolation("V2 runtime capabilities differ from the manifest")
+
+
+def validate_provider_v2_semantic_chain(manifest, runtime, params, digest):
+    validate_provider_v2_runtime_against_manifest(runtime, manifest, digest)
+    validate_provider_v2_tool_invoke_params(params)
+    invocation = params["invocation"]
+    if invocation["package_digest"] != digest:
+        raise SchemaViolation("V2 invocation package digest differs from the approved package")
+    parsed_digest, provider_id, tool_name = parse_provider_v2_tool_id(invocation["tool_id"])
+    if parsed_digest != digest or provider_id != manifest["provider_id"]:
+        raise SchemaViolation("V2 invocation tool identity differs from the manifest")
+    declared = next(
+        (tool for tool in manifest["tools"] if tool["name"] == tool_name),
+        None,
+    )
+    if declared is None:
+        raise SchemaViolation("V2 invocation tool is undeclared")
+    runtime_tool = next(
+        (tool for tool in runtime["tools"] if tool["tool_id"] == invocation["tool_id"]),
+        None,
+    )
+    if runtime_tool is None:
+        raise SchemaViolation("V2 invocation tool is absent from runtime descriptors")
+    if (
+        invocation["authentication"] != declared["authentication"]
+        or invocation["authentication"] != runtime_tool["authentication"]
+    ):
+        raise SchemaViolation("V2 invocation authentication differs from the approved chain")
 
 
 def validate_provider_byte_string(value, maximum, label):
@@ -1444,6 +1721,341 @@ class ContractTest(unittest.TestCase):
         provider_text = "\n".join(path.read_text() for path in PROVIDER_SCHEMA_DIR.rglob("*.json"))
         self.assertNotIn("credentials/redeem", provider_text)
         self.assertNotIn("tools/invoke", provider_text)
+
+    def test_provider_v2_schema_root_is_explicit_and_v1_remains_v1(self):
+        self.assertEqual(PROVIDER_SCHEMA_DIR, PROVIDER_V1_SCHEMA_DIR)
+        self.assertNotEqual(PROVIDER_V1_SCHEMA_DIR, PROVIDER_V2_SCHEMA_DIR)
+        self.assertEqual(set(PROVIDER_SCHEMA_ROOTS), {"v1", "v2"})
+
+        v1_schemas = sorted(PROVIDER_V1_SCHEMA_DIR.glob("*.schema.json"))
+        v2_schemas = sorted(PROVIDER_V2_SCHEMA_DIR.glob("*.schema.json"))
+        self.assertGreaterEqual(len(v1_schemas), 4)
+        self.assertEqual(
+            {path.name for path in v2_schemas},
+            {"manifest.schema.json", "rpc.schema.json", "initialize-result.schema.json"},
+        )
+        for path in v1_schemas:
+            document = json.loads(path.read_text())
+            self.assertTrue(
+                document["$id"].startswith(
+                    ("https://gorce.dev/schemas/provider-abi/v1/", "gorce.provider/v1/")
+                )
+            )
+        for path in v2_schemas:
+            document = json.loads(path.read_text())
+            self.assertEqual(document["$schema"], "https://json-schema.org/draft/2020-12/schema")
+            self.assertIn("/provider-abi/v2/", document["$id"])
+
+        v1_manifest = json.loads((PROVIDER_V1_SCHEMA_DIR / "examples" / "manifest.json").read_text())
+        validate(v1_manifest, json.loads((PROVIDER_V1_SCHEMA_DIR / "manifest.schema.json").read_text()))
+        validate_provider_manifest_contract(v1_manifest)
+
+    def test_provider_v2_schemas_and_examples_are_loaded_and_parsed(self):
+        manifest_schema = load_v2_schema("manifest.schema.json")
+        rpc_schema = load_v2_schema("rpc.schema.json")
+        initialize_schema = load_v2_schema("initialize-result.schema.json")
+        manifest = load_v2_example("manifest.json")
+        initialize_result = load_v2_example("initialize-result.json")
+
+        validate(manifest, manifest_schema)
+        validate_provider_v2_manifest_contract(manifest)
+        validate(initialize_result, initialize_schema)
+        validate_provider_v2_initialize_result_contract(initialize_result)
+
+        for filename in (
+            "initialize.json",
+            "tool-invoke-none.json",
+            "tool-invoke-host-secret.json",
+            "tool-invoke-official-cli.json",
+            "connection-diagnostic-codex.json",
+            "connection-diagnostic-claude-code.json",
+        ):
+            with self.subTest(example=filename):
+                value = load_v2_example(filename)
+                validate(value, rpc_schema)
+                validate_provider_v2_rpc_contract(value)
+
+    def test_provider_v2_tagged_authentication_is_closed_and_required(self):
+        manifest_schema = load_v2_schema("manifest.schema.json")
+        initialize_schema = load_v2_schema("initialize-result.schema.json")
+        rpc_schema = load_v2_schema("rpc.schema.json")
+        authentication_schema = manifest_schema["$defs"]["authentication"]
+        fixtures = json.loads(
+            (PROVIDER_V2_SCHEMA_DIR / "provider-abi-fixtures.json").read_text()
+        )
+
+        for fixture in fixtures["positive"]:
+            if fixture["kind"] != "authentication":
+                continue
+            with self.subTest(name=fixture["name"], polarity="positive"):
+                validate(fixture["value"], authentication_schema, root=manifest_schema)
+                validate_provider_v2_authentication(fixture["value"])
+        for fixture in fixtures["negative"]:
+            if fixture["kind"] != "authentication":
+                continue
+            with self.subTest(name=fixture["name"], polarity="negative"):
+                schema_failed = False
+                try:
+                    validate(fixture["value"], authentication_schema, root=manifest_schema)
+                except SchemaViolation:
+                    schema_failed = True
+                semantic_failed = False
+                try:
+                    validate_provider_v2_authentication(fixture["value"])
+                except SchemaViolation:
+                    semantic_failed = True
+                self.assertTrue(schema_failed or semantic_failed)
+
+        manifest = load_v2_example("manifest.json")
+        no_host_secret_methods = copy.deepcopy(manifest)
+        no_host_secret_methods["auth_methods"] = []
+        no_host_secret_methods["capabilities"]["auth_method_ids"] = []
+        no_host_secret_methods["capabilities"]["credential_classes"] = []
+        no_host_secret_methods["tools"] = [
+            tool
+            for tool in no_host_secret_methods["tools"]
+            if tool["authentication"]["kind"] != "host_secret"
+        ]
+        validate(no_host_secret_methods, manifest_schema)
+        validate_provider_v2_manifest_contract(no_host_secret_methods)
+
+        too_many_methods = copy.deepcopy(manifest)
+        too_many_methods["auth_methods"] = [
+            {
+                "id": f"method-{index}",
+                "credential_class": f"class-{index}",
+                "label": "Fixture",
+                "delivery_kind": "api_key",
+            }
+            for index in range(9)
+        ]
+        with self.assertRaises(SchemaViolation):
+            validate(too_many_methods, manifest_schema)
+
+        missing_manifest_auth = copy.deepcopy(manifest)
+        missing_manifest_auth["tools"][0].pop("authentication")
+        with self.assertRaises(SchemaViolation):
+            validate(missing_manifest_auth, manifest_schema)
+
+        initialize = load_v2_example("initialize-result.json")
+        missing_descriptor_auth = copy.deepcopy(initialize)
+        missing_descriptor_auth["tools"][0].pop("authentication")
+        with self.assertRaises(SchemaViolation):
+            validate(missing_descriptor_auth, initialize_schema)
+
+        invoke = load_v2_example("tool-invoke-none.json")
+        missing_invocation_auth = copy.deepcopy(invoke)
+        missing_invocation_auth["params"]["invocation"].pop("authentication")
+        with self.assertRaises(SchemaViolation):
+            validate(missing_invocation_auth, rpc_schema)
+
+        for source, schema, location in (
+            (manifest, manifest_schema, ("tools", 0)),
+            (initialize, initialize_schema, ("tools", 0)),
+            (invoke, rpc_schema, ("params", "invocation")),
+        ):
+            for field in ("auth_method_id", "credential_class", "delivery_kind"):
+                forged = copy.deepcopy(source)
+                cursor = forged
+                for part in location:
+                    cursor = cursor[part]
+                cursor[field] = None
+                with self.subTest(location=location, field=field):
+                    with self.assertRaises(SchemaViolation):
+                        validate(forged, schema)
+
+        for field in ("credential_class", "delivery_kind"):
+            forged = copy.deepcopy(manifest)
+            forged["tools"][2]["authentication"][field] = (
+                "legacy" if field == "credential_class" else "access_token"
+            )
+            with self.subTest(field=field):
+                with self.assertRaises(SchemaViolation):
+                    validate(forged, manifest_schema)
+
+        invalid_policy = copy.deepcopy(manifest)
+        invalid_policy["tools"][2]["authentication"]["policy_id"] = (
+            "gorce.official-cli/codex/v2"
+        )
+        with self.assertRaises(SchemaViolation):
+            validate(invalid_policy, manifest_schema)
+
+    def test_provider_v2_auth_identifier_grammar_matches_rust_and_schema(self):
+        manifest_schema = load_v2_schema("manifest.schema.json")
+        authentication_schema = manifest_schema["$defs"]["authentication"]
+        for field, invalid in (
+            ("auth_method_id", "API"),
+            ("credential_class", "credential:class"),
+            ("auth_method_id", "é"),
+            ("credential_class", "a" * 65),
+        ):
+            value = {
+                "kind": "host_secret",
+                "auth_method_id": "api",
+                "credential_class": "secret",
+                "delivery_kind": "api_key",
+            }
+            value[field] = invalid
+            with self.subTest(field=field, value=invalid):
+                with self.assertRaises(SchemaViolation):
+                    validate(value, authentication_schema, root=manifest_schema)
+                with self.assertRaises(SchemaViolation):
+                    validate_provider_v2_authentication(value)
+
+    def test_provider_v2_secret_delivery_is_host_secret_only_and_complete(self):
+        rpc_schema = load_v2_schema("rpc.schema.json")
+        for filename in (
+            "tool-invoke-none.json",
+            "tool-invoke-host-secret.json",
+            "tool-invoke-official-cli.json",
+        ):
+            value = load_v2_example(filename)
+            with self.subTest(example=filename):
+                validate(value, rpc_schema)
+                validate_provider_v2_rpc_contract(value)
+
+        adversarial = {
+            "none-secret-delivery.json",
+            "official-cli-secret-delivery.json",
+            "host-secret-missing-delivery.json",
+            "host-secret-null-delivery.json",
+            "cross-delivery-kind-swap.json",
+        }
+        for filename in adversarial:
+            raw = json.loads(
+                (PROVIDER_V2_SCHEMA_DIR / "examples" / "adversarial" / filename).read_text()
+            )
+            value = {
+                "jsonrpc": "2.0",
+                "id": f"adversarial-{filename}",
+                "method": "tool.invoke",
+                "params": raw,
+            }
+            schema_failed = False
+            try:
+                validate(value, rpc_schema)
+            except SchemaViolation:
+                schema_failed = True
+            semantic_failed = False
+            try:
+                validate_provider_v2_rpc_contract(value)
+            except SchemaViolation:
+                semantic_failed = True
+            with self.subTest(example=filename):
+                self.assertTrue(schema_failed or semantic_failed)
+
+        host = load_v2_example("tool-invoke-host-secret.json")
+        for field, replacement in (
+            ("auth_method_id", "other"),
+            ("credential_class", "other-class"),
+            ("kind", "access_token"),
+            ("invocation_id", "other-invocation"),
+        ):
+            forged = copy.deepcopy(host)
+            forged["params"]["secret_delivery"][field] = replacement
+            with self.subTest(field=field):
+                validate(forged, rpc_schema)
+                with self.assertRaises(SchemaViolation):
+                    validate_provider_v2_rpc_contract(forged)
+
+        expired = copy.deepcopy(host)
+        expired["params"]["secret_delivery"]["expires_at_unix_ms"] = (
+            expired["params"]["invocation"]["deadline_unix_ms"] + 1
+        )
+        validate(expired, rpc_schema)
+        with self.assertRaises(SchemaViolation):
+            validate_provider_v2_rpc_contract(expired)
+
+    def test_provider_v2_semantic_chain_rejects_cross_object_fixtures(self):
+        manifest = load_v2_example("manifest.json")
+        runtime = load_v2_example("initialize-result.json")
+        digest = runtime["package_digest"]
+        validate_provider_v2_runtime_against_manifest(runtime, manifest, digest)
+
+        for filename in (
+            "cross-method-swap.json",
+            "cross-class-swap.json",
+            "cross-tool-swap.json",
+            "cross-policy-swap.json",
+        ):
+            params = json.loads(
+                (PROVIDER_V2_SCHEMA_DIR / "examples" / "adversarial" / filename).read_text()
+            )
+            with self.subTest(fixture=filename):
+                with self.assertRaises(SchemaViolation):
+                    validate_provider_v2_semantic_chain(manifest, runtime, params, digest)
+
+        escalated_runtime = json.loads(
+            (
+                PROVIDER_V2_SCHEMA_DIR
+                / "examples"
+                / "adversarial"
+                / "runtime-capability-escalation.json"
+            ).read_text()
+        )
+        valid_params = load_v2_example("tool-invoke-host-secret.json")["params"]
+        with self.assertRaises(SchemaViolation):
+            validate_provider_v2_semantic_chain(
+                manifest, escalated_runtime, valid_params, digest
+            )
+
+    def test_provider_v2_and_v1_contracts_are_not_interchangeable(self):
+        v1_manifest_schema = json.loads(
+            (PROVIDER_V1_SCHEMA_DIR / "manifest.schema.json").read_text()
+        )
+        v1_rpc_schema = json.loads((PROVIDER_V1_SCHEMA_DIR / "rpc.schema.json").read_text())
+        v2_manifest_schema = load_v2_schema("manifest.schema.json")
+        v2_rpc_schema = load_v2_schema("rpc.schema.json")
+        v1_manifest = json.loads(
+            (PROVIDER_V1_SCHEMA_DIR / "examples" / "manifest.json").read_text()
+        )
+        v2_manifest = load_v2_example("manifest.json")
+        v1_initialize = json.loads(
+            (PROVIDER_V1_SCHEMA_DIR / "examples" / "initialize.json").read_text()
+        )
+        v2_initialize = load_v2_example("initialize.json")
+
+        validate(v1_manifest, v1_manifest_schema)
+        validate_provider_manifest_contract(v1_manifest)
+        validate(v2_manifest, v2_manifest_schema)
+        validate_provider_v2_manifest_contract(v2_manifest)
+        with self.assertRaises(SchemaViolation):
+            validate(v1_manifest, v2_manifest_schema)
+        with self.assertRaises(SchemaViolation):
+            validate(v2_manifest, v1_manifest_schema)
+
+        validate(v1_initialize, v1_rpc_schema)
+        validate_provider_rpc_contract(v1_initialize)
+        validate(v2_initialize, v2_rpc_schema)
+        validate_provider_v2_rpc_contract(v2_initialize)
+        with self.assertRaises(SchemaViolation):
+            validate(v1_initialize, v2_rpc_schema)
+        with self.assertRaises(SchemaViolation):
+            validate(v2_initialize, v1_rpc_schema)
+
+        v1_invoke = json.loads(
+            (PROVIDER_V1_SCHEMA_DIR / "examples" / "tool-invoke.json").read_text()
+        )
+        v2_invoke = load_v2_example("tool-invoke-none.json")
+        with self.assertRaises(SchemaViolation):
+            validate(v1_invoke, v2_rpc_schema)
+        with self.assertRaises(SchemaViolation):
+            validate(v2_invoke, v1_rpc_schema)
+
+    def test_provider_v2_connection_diagnostic_examples_are_parsing_only(self):
+        rpc_schema = load_v2_schema("rpc.schema.json")
+        for filename, policy in (
+            ("connection-diagnostic-codex.json", "gorce.official-cli/codex/v1"),
+            (
+                "connection-diagnostic-claude-code.json",
+                "gorce.official-cli/claude-code/v1",
+            ),
+        ):
+            value = load_v2_example(filename)
+            validate(value, rpc_schema)
+            validate_provider_v2_rpc_contract(value)
+            self.assertEqual(value["params"]["policy_id"], policy)
+            self.assertEqual(value["method"], "connection_diagnostic")
 
     def test_provider_rust_and_spawned_mock_contracts_are_exercised(self):
         cargo = shutil.which("cargo") or "/opt/homebrew/opt/rustup/bin/cargo"

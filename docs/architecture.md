@@ -1,18 +1,24 @@
 # Architecture
 
 Gorce is a local-first system with explicit boundaries between the daemon,
-agent, storage, protocol, provider, and client layers. The Phase 1 provider
-implementation supplies contracts and pure policy, and the narrow Phase 2
-provider-source proof supplies resolver-snapshot verification. Provider daemon
-runtime integration remains deferred.
+agent, storage, protocol, provider, and client layers. The narrow
+representation-only V2 schema/auth contract is the current Phase 1 V2
+contract. All V1 behavior remains frozen. Existing V1 core policy,
+source/archive verification, and durable authority remain current; only V2
+integration into those systems is deferred. Runtime execution, provider runtime,
+daemon/public APIs,
+cache/materialization, CLI policy/version/argv/env/cwd,
+login/status/diagnostics, budgets, and TUI remain deferred. This documentation
+does not imply runtime authorization or CLI adapter execution.
 
 ## Boundaries
 
 - `gorce-protocol` owns daemon-client wire types and identifiers.
 - `gorce-provider-abi` owns the separately versioned `gorce.provider/v1`
   package, manifest, JSON-RPC, schema, signing, and invocation types.
-- `gorce-core` owns provider approval, capability, lifecycle, and authorized
-  invocation lease policy independent of I/O.
+- `gorce-core` owns the V1 provider approval, capability, lifecycle, and
+  authorized invocation lease policy independent of I/O. V2 integration with
+  that existing policy remains deferred in this lane.
 - `gorce-store` owns filesystem layout, persistence, and recovery contracts.
 - `gorce-agent` owns coordination between domain operations and storage.
 - `gorce-daemon` owns process lifecycle and the daemon API boundary.
@@ -25,26 +31,29 @@ not depend on daemon, SDK, TUI, or CLI implementation details.
 
 ## Community-provider boundary
 
-Phase 1 establishes the canonical provider ABI, pure provider policy, manifest
-and schema examples, deterministic mock conformance, and normative docs. The
-narrow Phase 2 source-proof slice frozen in ADR 0005 verifies one resolver-owned
-snapshot. A future installed provider will cross the still-planned runtime
-boundary:
+The V1 provider ABI, its frozen behavior, core policy, source/archive
+verification, manifest/schema examples, durable registry, and normative docs
+are current compatibility and authority inputs. The narrow Phase 2 source-proof
+slice frozen in ADR 0005 verifies one resolver-owned snapshot; V2 integration
+with source/archive verification and a runtime provider remains deferred. A
+future installed provider will cross the still-planned runtime boundary:
 
 ```text
 explicit Git source pin and approval -> daemon-global provider_data_root registry -> future package host/broker -> provider process
 ```
 
 The package host/broker is planned and is not present in this repository. The
-implemented source proof accepts only an unsigned `PinnedGitSource`: a
+existing source-proof verifier validates an unsigned `PinnedGitSource`: a
 canonical HTTPS Git URL, a full lower-case immutable commit, its `sha1` or
-`sha256` hash algorithm, and a resolver-declared source content digest. Moving
-refs, direct HTTPS archive URLs, local filesystem paths, publisher/official
-signatures, and marketplace listings are not source authority. The proof does
-not perform Git network transport or resolve a ref; it consumes one
-`ResolverOwnedGitSnapshot` supplied by resolver code.
+`sha256` hash algorithm, and a resolver-declared source content digest. This
+current source/archive verification is not Git transport, provider hosting, or
+V2 runtime integration. Moving refs, direct HTTPS archive URLs, local
+filesystem paths, publisher/official signatures, and marketplace listings are
+not source authority. The verifier does not perform Git network transport or
+resolve a ref; it consumes one `ResolverOwnedGitSnapshot` supplied by resolver
+code.
 
-`verify_provider_source` accepts only the resolver-owned
+The source-proof verifier operates on the resolver-owned
 `ResolverOwnedGitSnapshot`; its fields, resolver constructor, and
 `ResolverSourceEntry` construction/access are sealed to resolver code. The
 snapshot separately supplies `manifest_mode`, the Git regular mode for
@@ -77,8 +86,8 @@ digest-bound.
 `source-fixtures.json` positive, negative, and UTF-8 byte-bound cases execute
 across Rust source verification, JSON Schema validation, and Python semantic
 contract checks. Provider parity fixtures continue to cross-check the shared
-path, URL, and validation semantics. These fixtures are proof evidence, not
-Git transport or provider-host implementation.
+path, URL, and validation semantics. These fixtures validate the frozen source
+contract; they do not provide Git transport or provider-host implementation.
 
 ADR 0006 freezes the storage-only registry/install-root contract. The daemon
 global `provider_data_root` is independent of projects and invocations and has
@@ -97,15 +106,19 @@ protected credential persistence, or daemon-owned OAuth in this repository. The
 storage root contains approval metadata only; it does not contain a cloned
 source tree or executable.
 
-## Provider-runtime Phase 0 boundary
+## Provider-runtime historical Phase 0 boundary and current V2 lane
 
-ADR 0007 freezes documentation for a possible provider runtime without
-authorizing its implementation. `gorce.provider/v1` remains frozen. A future
-V2 may use one explicit tagged authentication binding—`none`, `host_secret`, or
-`official_cli_session`—but no V2 schema or runtime auth method is shipped. V2
-must not reinterpret V1 nullable fields. Gorce does not own vendor OAuth,
-tokens, refresh, credential files, profile contents, token injection, or
-vendor credential parsing.
+ADR 0007 preserves the historical Phase 0 stop line for a possible provider
+runtime. The narrow representation-only V2 schema/auth contract is the current
+Phase 1 V2 contract, with one explicit tagged authentication binding—`none`,
+`host_secret`, or `official_cli_session`. All V1 behavior remains frozen. This
+representation is not runtime authorization, a credential-delivery mechanism,
+or a shipped runtime auth method. V2 integration with existing source/archive
+verification, approval/lease policy, and durable authority remains deferred.
+Runtime execution and provider runtime remain deferred. V2 must not
+reinterpret V1 nullable fields. Gorce does not own vendor OAuth, tokens,
+refresh, credential files, profile contents, token injection, or vendor
+credential parsing.
 
 Codex and Claude Code are external official CLIs invoked by future Gorce
 adapter packages; they are not official vendor providers or Gorce-owned vendor
@@ -120,22 +133,25 @@ not approved in Phase 0. No arbitrary source build, caller-selected
 executable, or implicit approval is allowed; the later closed-setup gate must
 record the concrete catalog and human approval rules.
 
-The first future host is one adapter process per diagnostic request, with
-process-tree containment/reaping, bounded output/lifetime, strict
+Any future host is intended to use one adapter process per diagnostic request,
+with process-tree containment/reaping, bounded output/lifetime, strict
 argv/environment/cwd policy, and redacted output. The concrete platform
 containment mechanism, cache behavior, versions, argv, environment, cwd,
 diagnostic prompt, and time/turn/spend/output values are deferred to the
 normative signoff record in ADR 0007. Candidate command families are `codex exec --json`
-and headless `claude -p`; they are not frozen policy values. The later policy
-gate must also project only coarse CLI availability/authentication status,
-reject Claude `--bare`, exclude `claude setup-token` and environment OAuth
-tokens, remove ambient vendor credentials, and use fake executables to prove
-the recorded behavior before live diagnostics.
+and headless `claude -p`; they are not frozen policy values or current
+execution. CLI policy/version/argv/env/cwd, login/status/diagnostics, and
+budgets remain deferred. The later policy gate must also project only coarse
+CLI availability/authentication status, reject Claude `--bare`, exclude
+`claude setup-token` and environment OAuth tokens, remove ambient vendor
+credentials, and use fake executables to prove the recorded behavior before
+any live diagnostics.
 
-Until a separate admissions redesign, the only future public controls are
-approved setup/materialization, coarse status, and one diagnostic connection
-test under later-approved prompt and budget values. General provider execution,
-public invocation, login, and vendor OAuth remain disabled. The
+No daemon or public control is implemented by this lane. Until a separate
+admissions redesign, the only contemplated future controls are approved
+setup/materialization, coarse status, and one diagnostic connection test under
+later-approved prompt and budget values. General provider execution, public
+invocation, login, and vendor OAuth remain disabled. The
 trusted-same-user warning is mandatory: an adapter and official CLI can access
 same-user files and credentials, and the non-reading policy is not a sandbox.
 No operator login is permitted until the later V2, authority/materialization,
@@ -143,10 +159,10 @@ platform/process, fake-CLI, diagnostic, redaction, consent, and admissions
 gates sign off their concrete values.
 
 The current Phase 1 `verify_provider_archive(archive_bytes)` implementation
-still verifies the bounded signed ZIP, exact manifest bytes, regular-file ZIP
-modes, file table, and executable hash. That signed-archive path is retained
-only as Phase 1 implementation/conformance regression evidence, not as the
-Phase 2 source authority or a current launch path. The archive limit is 16 MiB
+verifies the bounded signed ZIP, exact manifest bytes, regular-file ZIP modes,
+file table, and executable hash. This is the current frozen V1
+source/archive-verification path, not V2 integration or a provider launch path.
+The archive limit is 16 MiB
 with at most 130 entries, and uncompressed archive content is bounded to
 268,701,696 bytes. Its strict signed-manifest file fields, publisher/signature
 requirement, and rejection of source-only manifest file modes are unchanged.
@@ -181,8 +197,10 @@ could read accessible user data or copy a delivered credential. Source
 immutability does not create an untrusted package mode or a sandbox; that would
 require a separate decision and real platform enforcement.
 
-The provider process will speak `gorce.provider/v1` over strict LF-NDJSON, not
-`gorce-protocol`. Exactly one `gorce.initialize` request comes first with the
+The frozen V1 provider-process contract speaks `gorce.provider/v1` over strict
+LF-NDJSON, not `gorce-protocol`. This is contract documentation and conformance
+evidence, not current provider execution or runtime authorization. Exactly one
+`gorce.initialize` request comes first with the
 exact `gorce.provider/v1` version range and positive host limits no greater than
 the ABI maxima; lower negotiated values remain in force. The only V1 methods are
 `gorce.initialize`, `tool.invoke`, `operation.cancel`, and `gorce.shutdown`.
@@ -196,6 +214,10 @@ initialization, every response—including malformed-frame errors, worker
 terminal results/errors, cancellation, timeout, busy, and shutdown responses—
 is encoded under the negotiated `HostLimits`; no response falls back to the
 ABI maximum.
+
+The following V1 descriptor, delivery, and pure-policy behavior is current and
+remains frozen. It does not authorize a V2 runtime, add V2 approval or lease
+integration, or make any provider process executable in this lane.
 
 Runtime tool descriptors and capabilities must exactly match the approved
 manifest. Host-derived tool IDs use
@@ -287,26 +309,32 @@ invalidation; that host integration is not implemented here.
 
 ## Runtime status and stop lines
 
-The ABI crate, pure core policy, narrow resolver-snapshot source proof, and
-storage-only provider registry are implemented. No Git network transport or
-resolver, source materialization, executable launch, package host/broker,
-provider process supervisor, protected provider credential persistence,
-daemon provider/install route, or daemon-owned OAuth exists in this repository.
-The provider ABI and source proof do not perform I/O, OAuth exchange,
-persistence, or secret storage. The mock conformance harness does perform
-bounded test-process reap and stderr capture solely to prove Phase 1
-abnormal-exit behavior; that is not a production provider supervisor.
+The repository contains the frozen V1 ABI and core policy, current
+source/archive verification, and storage-only durable provider authority. The
+current lane adds only the representation-only V2 schema/auth contract; V2
+integration into source/archive verification, approval/lease policy, and
+durable authority remains deferred. No Git network transport or resolver,
+source materialization, executable launch,
+package host/broker, provider process supervisor, protected provider
+credential persistence, daemon provider/install route, or daemon-owned OAuth
+exists in this repository. The provider ABI and source proof do not perform
+I/O, OAuth exchange, persistence, or secret storage. The mock conformance
+harness does perform bounded test-process reap and stderr capture solely to
+prove frozen V1 abnormal-exit behavior; that is not a production provider
+supervisor.
 
 ADR 0005 records the narrow Phase 2 source-proof boundary and ADR 0006 records
-the storage-only daemon-global registry boundary. ADR 0007 is documentation-only
-and does not implement V2, a provider runtime, CLI adapters, a cache, process
-hosting, login, or diagnostics. Git transport, source materialization,
-executable launch/process lifecycle, credentials/OAuth, provider host/broker
-integration, daemon install/provider routes, scoped lease issuance, and
-authorization integration remain future work. Phase 3 is the first phase for
-authenticated daemon routes, SDK/client models, authoring surfaces, and
-public-boundary integration evidence. These stop lines do not claim a sandbox
-or an untrusted package mode.
+the storage-only daemon-global registry boundary. ADR 0007 preserves the
+historical Phase 0 stop line; its current scope is only the representation-only
+V2 schema/auth contract. V2 integration with source/archive verification,
+approval/lease policy, durable authority, provider runtime, CLI adapters,
+cache/materialization, process hosting, login/status/diagnostics, budgets,
+daemon/public APIs, scoped lease issuance, and runtime authorization remains
+deferred. Git transport, executable launch/process lifecycle, credentials/OAuth,
+provider host/broker integration, and daemon install/provider routes likewise
+remain future work. Phase 3 is the first phase for authenticated daemon routes,
+SDK/client models, authoring surfaces, and public-boundary integration evidence.
+These stop lines do not claim a sandbox or an untrusted package mode.
 
 ## Compatibility
 

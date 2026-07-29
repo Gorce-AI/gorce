@@ -1,0 +1,11 @@
+{
+  "invocation": {
+    "package_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tool_id": "gorce.provider/v2/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/v2-fixture/host_auth",
+    "invocation_id": "swap-delivery-kind",
+    "authentication": {"kind": "host_secret", "auth_method_id": "api", "credential_class": "secret", "delivery_kind": "api_key"},
+    "deadline_unix_ms": 1893456030000
+  },
+  "input": {},
+  "secret_delivery": {"auth_method_id": "api", "invocation_id": "swap-delivery-kind", "kind": "access_token", "credential_class": "secret", "value": "swap", "expires_at_unix_ms": 1893456030000}
+}

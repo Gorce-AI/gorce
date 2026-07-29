@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/provider-abi/v2/manifest.schema.json",
+  "title": "gorce.provider/v2 signed manifest representation",
+  "$comment": "V2 is representation-only in Phase 1. Authentication is a required closed tagged binding on every tool declaration. Cross-object capability equality is checked by the Rust ABI validator.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "provider_id", "display_name", "version", "publisher", "package", "auth_methods", "capabilities", "tools"],
+  "properties": {
+    "format": {"const": "gorce.provider/v2"},
+    "provider_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+    "display_name": {"$ref": "#/$defs/text"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "publisher": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "fingerprint"],
+      "properties": {"name": {"$ref": "#/$defs/text"}, "fingerprint": {"$ref": "#/$defs/hex256"}}
+    },
+    "package": {
+      "type": "object", "additionalProperties": false,
+      "required": ["files", "executable"],
+      "properties": {
+        "files": {
+          "type": "array", "minItems": 1, "maxItems": 128,
+          "items": {"$ref": "#/$defs/packageFile"}
+        },
+        "executable": {"$ref": "#/$defs/executable"}
+      }
+    },
+    "auth_methods": {
+      "type": "array", "minItems": 0, "maxItems": 8,
+      "items": {"$ref": "#/$defs/authMethod"}
+    },
+    "capabilities": {"$ref": "#/$defs/capabilities"},
+    "tools": {
+      "type": "array", "minItems": 1, "maxItems": 64,
+      "items": {"$ref": "#/$defs/tool"}
+    }
+  },
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"},
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+    "hex256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "origin": {"type": "string", "pattern": "^https://[^/?#]+$"},
+    "packagePath": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*[:\\\\<>\"|?*])[!-~]+$"},
+    "packageFile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "size", "sha256"],
+      "properties": {"path": {"$ref": "#/$defs/packagePath"}, "size": {"type": "integer", "minimum": 0, "maximum": 67108864}, "sha256": {"$ref": "#/$defs/hex256"}}
+    },
+    "executable": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {"path": {"$ref": "#/$defs/packagePath"}, "sha256": {"$ref": "#/$defs/hex256"}}
+    },
+    "deliveryKind": {"enum": ["api_key", "access_token"]},
+    "policyId": {"enum": ["gorce.official-cli/codex/v1", "gorce.official-cli/claude-code/v1"]},
+    "authMethod": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "credential_class", "label", "delivery_kind"],
+      "properties": {"id": {"$ref": "#/$defs/identifier"}, "credential_class": {"$ref": "#/$defs/identifier"}, "label": {"$ref": "#/$defs/text"}, "delivery_kind": {"$ref": "#/$defs/deliveryKind"}}
+    },
+    "authentication": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["kind"], "properties": {"kind": {"const": "none"}}},
+        {"type": "object", "additionalProperties": false, "required": ["kind", "auth_method_id", "credential_class", "delivery_kind"], "properties": {"kind": {"const": "host_secret"}, "auth_method_id": {"$ref": "#/$defs/identifier"}, "credential_class": {"$ref": "#/$defs/identifier"}, "delivery_kind": {"$ref": "#/$defs/deliveryKind"}}},
+        {"type": "object", "additionalProperties": false, "required": ["kind", "policy_id"], "properties": {"kind": {"const": "official_cli_session"}, "policy_id": {"$ref": "#/$defs/policyId"}}}
+      ]
+    },
+    "localSchema": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "type": {"enum": ["object", "array", "string", "integer", "number", "boolean", "null"]},
+        "title": {"$ref": "#/$defs/text"}, "description": {"$ref": "#/$defs/text"},
+        "properties": {"type": "object", "additionalProperties": {"$ref": "#/$defs/localSchema"}},
+        "required": {"type": "array", "items": {"type": "string"}},
+        "items": {"$ref": "#/$defs/localSchema"}, "additionalProperties": {"type": "boolean"},
+        "enum": {"type": "array", "minItems": 1, "maxItems": 32}, "const": {},
+        "minLength": {"type": "integer", "minimum": 0, "maximum": 4096}, "maxLength": {"type": "integer", "minimum": 0, "maximum": 4096},
+        "minimum": {"type": "number"}, "maximum": {"type": "number"},
+        "minItems": {"type": "integer", "minimum": 0, "maximum": 256}, "maxItems": {"type": "integer", "minimum": 0, "maximum": 256}
+      }
+    },
+    "sideEffect": {"enum": ["none", "network_read", "network_write", "local_write"]},
+    "capabilities": {
+      "type": "object", "additionalProperties": false,
+      "required": ["auth_method_ids", "credential_classes", "network_origins", "official_cli_policy_ids"],
+      "properties": {
+        "auth_method_ids": {"type": "array", "maxItems": 8, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+        "credential_classes": {"type": "array", "maxItems": 8, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+        "network_origins": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/origin"}},
+        "official_cli_policy_ids": {"type": "array", "maxItems": 2, "uniqueItems": true, "items": {"$ref": "#/$defs/policyId"}}
+      }
+    },
+    "tool": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "description", "input_schema", "output_schema", "side_effects", "authentication", "network_origins"],
+      "properties": {
+        "name": {"$ref": "#/$defs/identifier"}, "description": {"$ref": "#/$defs/text"},
+        "input_schema": {"allOf": [{"$ref": "#/$defs/localSchema"}, {"type": "object", "required": ["type"], "properties": {"type": {"const": "object"}}}]},
+        "output_schema": {"$ref": "#/$defs/localSchema"},
+        "side_effects": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/sideEffect"}},
+        "authentication": {"$ref": "#/$defs/authentication"},
+        "network_origins": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/origin"}}
+      }
+    }
+  }
+}

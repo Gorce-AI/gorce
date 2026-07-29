@@ -1,0 +1,42 @@
+{
+  "positive": [
+    {"name": "none-binding", "kind": "authentication", "value": {"kind": "none"}},
+    {"name": "host-secret-api-key-binding", "kind": "authentication", "value": {"kind": "host_secret", "auth_method_id": "api", "credential_class": "secret", "delivery_kind": "api_key"}},
+    {"name": "host-secret-access-token-binding", "kind": "authentication", "value": {"kind": "host_secret", "auth_method_id": "token", "credential_class": "session", "delivery_kind": "access_token"}},
+    {"name": "codex-official-cli-binding", "kind": "authentication", "value": {"kind": "official_cli_session", "policy_id": "gorce.official-cli/codex/v1"}},
+    {"name": "claude-official-cli-binding", "kind": "authentication", "value": {"kind": "official_cli_session", "policy_id": "gorce.official-cli/claude-code/v1"}},
+    {"name": "host-secret-delivery", "kind": "secret_delivery", "value": {"auth_method_id": "api", "invocation_id": "inv-host", "kind": "api_key", "credential_class": "secret", "value": "fixture-secret", "expires_at_unix_ms": 1000}},
+    {"name": "codex-connection-diagnostic", "kind": "connection_diagnostic", "file": "examples/connection-diagnostic-codex.json"},
+    {"name": "claude-connection-diagnostic", "kind": "connection_diagnostic", "file": "examples/connection-diagnostic-claude-code.json"},
+    {"name": "manifest-all-bindings", "kind": "manifest", "file": "examples/manifest.json"},
+    {"name": "runtime-all-bindings", "kind": "initialize_result", "file": "examples/initialize-result.json"}
+  ],
+  "negative": [
+    {"name": "missing-authentication-tag", "kind": "authentication", "value": {}},
+    {"name": "unknown-authentication-tag", "kind": "authentication", "value": {"kind": "oauth"}},
+    {"name": "none-forbidden-auth-method", "kind": "authentication", "value": {"kind": "none", "auth_method_id": "api"}},
+    {"name": "none-forbidden-credential-class", "kind": "authentication", "value": {"kind": "none", "credential_class": "secret"}},
+    {"name": "none-forbidden-delivery-kind", "kind": "authentication", "value": {"kind": "none", "delivery_kind": "api_key"}},
+    {"name": "host-secret-missing-method", "kind": "authentication", "value": {"kind": "host_secret", "credential_class": "secret", "delivery_kind": "api_key"}},
+    {"name": "host-secret-missing-class", "kind": "authentication", "value": {"kind": "host_secret", "auth_method_id": "api", "delivery_kind": "api_key"}},
+    {"name": "host-secret-missing-delivery-kind", "kind": "authentication", "value": {"kind": "host_secret", "auth_method_id": "api", "credential_class": "secret"}},
+    {"name": "host-secret-legacy-kind", "kind": "authentication", "value": {"kind": "api_key", "id": "api", "credential_class": "secret"}},
+    {"name": "official-cli-missing-policy", "kind": "authentication", "value": {"kind": "official_cli_session"}},
+    {"name": "official-cli-codex-v2-policy", "kind": "authentication", "value": {"kind": "official_cli_session", "policy_id": "gorce.official-cli/codex/v2"}},
+    {"name": "official-cli-claude-v2-policy", "kind": "authentication", "value": {"kind": "official_cli_session", "policy_id": "gorce.official-cli/claude-code/v2"}},
+    {"name": "official-cli-forbidden-credential-class", "kind": "authentication", "value": {"kind": "official_cli_session", "policy_id": "gorce.official-cli/codex/v1", "credential_class": "legacy"}},
+    {"name": "official-cli-forbidden-delivery-kind", "kind": "authentication", "value": {"kind": "official_cli_session", "policy_id": "gorce.official-cli/codex/v1", "delivery_kind": "access_token"}},
+    {"name": "official-cli-forbidden-secret-delivery", "kind": "tool_invoke", "file": "examples/adversarial/official-cli-secret-delivery.json"},
+    {"name": "none-forbidden-secret-delivery", "kind": "tool_invoke", "file": "examples/adversarial/none-secret-delivery.json"},
+    {"name": "host-secret-missing-secret-delivery", "kind": "tool_invoke", "file": "examples/adversarial/host-secret-missing-delivery.json"},
+    {"name": "host-secret-null-secret-delivery", "kind": "tool_invoke", "file": "examples/adversarial/host-secret-null-delivery.json"},
+    {"name": "v1-format-at-v2-root", "kind": "manifest", "file": "examples/adversarial/v1-format.json"},
+    {"name": "v1-nullable-tool-fields", "kind": "tool", "file": "examples/adversarial/v1-nullable-tool-fields.json"},
+    {"name": "cross-method-swap", "kind": "tool_invoke", "file": "examples/adversarial/cross-method-swap.json"},
+    {"name": "cross-class-swap", "kind": "tool_invoke", "file": "examples/adversarial/cross-class-swap.json"},
+    {"name": "cross-delivery-kind-swap", "kind": "manifest", "reason": "tool delivery kind must equal its method delivery kind"},
+    {"name": "cross-tool-swap", "kind": "tool_invoke", "file": "examples/adversarial/cross-tool-swap.json"},
+    {"name": "cross-policy-swap", "kind": "tool_invoke", "file": "examples/adversarial/cross-policy-swap.json"},
+    {"name": "runtime-capability-escalation", "kind": "initialize_result", "file": "examples/adversarial/runtime-capability-escalation.json"}
+  ]
+}
