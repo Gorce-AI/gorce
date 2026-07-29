@@ -516,7 +516,7 @@ fn malformed_frames_limits_and_secret_debug_are_rejected() {
         METHOD_TOOL_INVOKE,
         serde_json::to_value(invoke_params("a".repeat(64).as_str(), "debug", deadline())).unwrap(),
     );
-    assert!(!format!("{:?}", raw_request).contains(mock_web_search::SENTINEL_SECRET));
+    assert!(!format!("{raw_request:?}").contains(mock_web_search::SENTINEL_SECRET));
     let raw_response = JsonRpcResponse::success(
         RequestId::new("debug-response").unwrap(),
         &ToolResult {
@@ -525,5 +525,5 @@ fn malformed_frames_limits_and_secret_debug_are_rejected() {
         },
     )
     .unwrap();
-    assert!(!format!("{:?}", raw_response).contains(mock_web_search::SENTINEL_SECRET));
+    assert!(!format!("{raw_response:?}").contains(mock_web_search::SENTINEL_SECRET));
 }

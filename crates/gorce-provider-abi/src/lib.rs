@@ -73,7 +73,7 @@ mod tests {
         for _ in 0..=MAX_JSON_DEPTH {
             deep = json!({"nested": deep});
         }
-        assert!(decode_frame(format!("{}\n", deep).as_bytes()).is_err());
+        assert!(decode_frame(format!("{deep}\n").as_bytes()).is_err());
         let members = (0..=MAX_JSON_MEMBERS)
             .map(|index| (format!("field-{index}"), json!(true)))
             .collect::<serde_json::Map<_, _>>();
@@ -160,7 +160,7 @@ mod tests {
             "jsonrpc": "2.0", "id": "response-2", "result": {},
             "error": {"code": -1, "message": "bad"}
         });
-        assert!(decode_response(&format!("{}\n", both).into_bytes()).is_err());
+        assert!(decode_response(&format!("{both}\n").into_bytes()).is_err());
 
         let valid = oauth_manifest("https://example.com/authorize", "https://example.com");
         assert!(valid.validate().is_ok(), "{:?}", valid.validate());

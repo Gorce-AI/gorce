@@ -29,15 +29,23 @@ authentication, and operational commands will be added in later milestones.
 
 ## Development
 
-The repository requires the stable Rust toolchain with `rustfmt` and `clippy`.
-Run the complete local gate:
+The repository requires Rust 1.88 or newer with `rustfmt` and `clippy`.
+Run the complete local gate from the repository root:
 
 ```text
 cargo fmt --all -- --check
-cargo check --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo check --workspace --all-targets --locked
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+python3 tests/contract/test_contract.py
+cargo audit --deny warnings
 ```
+
+CI also runs the same check, test, and Clippy commands on Ubuntu with the
+explicit Rust 1.88.0 MSRV toolchain. The pinned Rust 1.97.1 job remains the
+three-platform release gate for Ubuntu, macOS, and Windows. A release requires
+all of these gates, including a clean `cargo audit --deny warnings`; do not
+release from an intermediate commit whose audit is still red.
 
 See `CONTRIBUTING.md` and `docs/development.md` for contribution and workflow
 details.

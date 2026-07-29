@@ -4072,7 +4072,7 @@ fn validate_authority_references(
             if principal.is_none()
                 || profile
                     .as_ref()
-                    .map_or(true, |profile| profile.policy_id != binding.policy_id)
+                    .is_none_or(|profile| profile.policy_id != binding.policy_id)
                 || policy.is_none()
             {
                 return Err(StoreError::InvalidFormat(

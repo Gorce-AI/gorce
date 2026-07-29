@@ -1346,7 +1346,7 @@ fn byte_label(bytes: usize) -> String {
     } else if bytes >= 1024 {
         format!("{:.1} KiB", bytes as f64 / 1024.0)
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     }
 }
 fn attachment_kind_label(kind: AttachmentKind) -> &'static str {
@@ -1431,21 +1431,52 @@ pub fn leave_terminal() -> io::Result<()> {
     terminal_result.and(raw_result)
 }
 
-/// Owns terminal mode for the duration of a runner. Dropping it always tries
-/// to restore the terminal, including when rendering or input returns an
-/// error.
-pub struct TerminalGuard;
+trait TerminalControl {
+    fn enter(&mut self) -> io::Result<()>;
+    fn leave(&mut self) -> io::Result<()>;
+}
 
-impl TerminalGuard {
-    pub fn enter() -> io::Result<Self> {
-        enter_terminal()?;
-        Ok(Self)
+struct ProductionTerminalControl;
+
+impl TerminalControl for ProductionTerminalControl {
+    fn enter(&mut self) -> io::Result<()> {
+        enter_terminal()
+    }
+
+    fn leave(&mut self) -> io::Result<()> {
+        leave_terminal()
     }
 }
 
-impl Drop for TerminalGuard {
+struct TerminalGuardInner<C: TerminalControl> {
+    control: C,
+}
+
+impl<C: TerminalControl> TerminalGuardInner<C> {
+    fn enter(mut control: C) -> io::Result<Self> {
+        control.enter()?;
+        Ok(Self { control })
+    }
+}
+
+impl<C: TerminalControl> Drop for TerminalGuardInner<C> {
     fn drop(&mut self) {
-        let _ = leave_terminal();
+        let _ = self.control.leave();
+    }
+}
+
+/// Owns terminal mode for the duration of a runner. Dropping it always tries
+/// to restore the terminal, including when rendering or input returns an
+/// error.
+pub struct TerminalGuard {
+    _inner: TerminalGuardInner<ProductionTerminalControl>,
+}
+
+impl TerminalGuard {
+    pub fn enter() -> io::Result<Self> {
+        Ok(Self {
+            _inner: TerminalGuardInner::enter(ProductionTerminalControl)?,
+        })
     }
 }
 
@@ -1468,7 +1499,7 @@ impl CrosstermSurface {
 impl UiSurface for CrosstermSurface {
     fn draw(&mut self, app: &App) -> io::Result<()> {
         self.terminal.draw(|frame| {
-            let area = frame.size();
+            let area = frame.area();
             render(frame, app, area);
         })?;
         Ok(())
@@ -1598,6 +1629,16 @@ where
 
     pub fn run(&mut self, app: &mut App) -> io::Result<()> {
         let _terminal_guard = TerminalGuard::enter()?;
+        self.run_loop(app)
+    }
+
+    #[cfg(test)]
+    fn run_with_terminal_control<C: TerminalControl>(
+        &mut self,
+        app: &mut App,
+        control: C,
+    ) -> io::Result<()> {
+        let _terminal_guard = TerminalGuardInner::enter(control)?;
         self.run_loop(app)
     }
 
@@ -1735,9 +1776,9 @@ fn connection_label(state: &ConnectionState) -> String {
                 attempt,
                 timestamp.as_str()
             ),
-            None => format!("reconnecting {}", attempt),
+            None => format!("reconnecting {attempt}"),
         },
-        ConnectionState::RetryPaused { attempt } => format!("retry paused {}", attempt),
+        ConnectionState::RetryPaused { attempt } => format!("retry paused {attempt}"),
         ConnectionState::Reconciling => "reconciling".into(),
         ConnectionState::Offline { reason, .. } => format!("offline · {}", reason.as_str()),
     }
@@ -1857,10 +1898,7 @@ fn reconnect_strip(app: &App) -> String {
             last_confirmed_suffix(last_confirmed_at.as_ref()),
         ),
         ConnectionState::RetryPaused { attempt } => {
-            format!(
-                " RETRY PAUSED · events held · attempt {} · r retry",
-                attempt
-            )
+            format!(" RETRY PAUSED · events held · attempt {attempt} · r retry")
         }
         ConnectionState::Reconciling => format!(
             " RECONCILING · replay staged · events held{}",
@@ -1934,13 +1972,13 @@ fn render_sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
     )];
     if let (Some(used), Some(limit)) = (&app.context_used, &app.context_limit) {
         lines.push(Line::styled(
-            format!(" context  {} / {}", used, limit),
+            format!(" context  {used} / {limit}"),
             Style::default().fg(Color::DarkGray),
         ));
     }
     if let Some(model) = &app.model {
         lines.push(Line::styled(
-            format!(" model  {}", model),
+            format!(" model  {model}"),
             Style::default().fg(Color::DarkGray),
         ));
     }
@@ -2003,9 +2041,9 @@ fn render_sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         lines.push(Line::from(""));
         let percent = app
             .budget_percent
-            .map_or(String::new(), |value| format!("  {}%", value));
+            .map_or(String::new(), |value| format!("  {value}%"));
         lines.push(Line::styled(
-            format!(" budget  {} / {}{}", spent, limit, percent),
+            format!(" budget  {spent} / {limit}{percent}"),
             Style::default().fg(Color::DarkGray),
         ));
     }
@@ -2107,8 +2145,164 @@ fn task_style(status: TaskStatus) -> Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+    use ratatui::Terminal;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     fn key(c: char) -> InputEvent {
         InputEvent::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+    }
+
+    fn render_buffer(app: &App, width: u16, height: u16) -> Buffer {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render(frame, app, area);
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn buffer_text(buffer: &Buffer) -> String {
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn cell_with_symbol<'a>(buffer: &'a Buffer, symbol: &str) -> Option<&'a ratatui::buffer::Cell> {
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                let cell = buffer.cell((x, y)).unwrap();
+                if cell.symbol() == symbol {
+                    return Some(cell);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn render_regressions_cover_sizes_geometry_text_styles_and_bounded_content() {
+        let long_text = format!("unicode Ω こんにちは {}", "0123456789".repeat(80));
+        let mut app = App {
+            title: "Unicode session".into(),
+            permission: PermissionMode::Bypass,
+            ..Default::default()
+        };
+        app.reduce_inbound(UiEvent::Connection(ConnectionEvent::Connected));
+        app.reduce(ClientEvent::Transcript(TranscriptEntry {
+            source: "agent".into(),
+            body: long_text.clone(),
+            attention: Attention::Silent,
+            attachment: None,
+        }));
+
+        for (width, height, expected_density) in [
+            (50, 15, None),
+            (80, 24, Some(Density::Narrow)),
+            (100, 24, Some(Density::Medium)),
+            (120, 24, Some(Density::Wide)),
+        ] {
+            let buffer = render_buffer(&app, width, height);
+            assert_eq!(buffer.area, Rect::new(0, 0, width, height));
+            if let Some(expected_density) = expected_density {
+                assert_eq!(density(width), expected_density);
+            } else {
+                assert!(buffer_text(&buffer).contains("terminal too small"));
+            }
+            assert!(buffer_text(&buffer).contains("Unicode session"));
+        }
+
+        let narrow = buffer_text(&render_buffer(&app, 80, 24));
+        assert!(narrow.contains("unicode Ω"));
+        assert!(!narrow.contains(&long_text));
+
+        let wide = render_buffer(&app, 120, 24);
+        let wide_text = buffer_text(&wide);
+        assert!(wide_text.contains("operations"));
+        let bypass = cell_with_symbol(&wide, "B").expect("BYPASS label is rendered");
+        assert_eq!(bypass.fg, Color::Red);
+    }
+
+    #[test]
+    fn render_regressions_cover_palette_operations_and_reconnect_state() {
+        let mut app = App {
+            operations_open: true,
+            palette_open: true,
+            ..Default::default()
+        };
+        app.reduce_inbound(UiEvent::Connection(ConnectionEvent::Reconnecting {
+            attempt: 3,
+            last_confirmed_at: Some(ConfirmedTimestamp::new("10:42:18")),
+        }));
+
+        let text = buffer_text(&render_buffer(&app, 120, 24));
+        assert!(text.contains("Command palette"));
+        assert!(text.contains("focus approvals"));
+        assert!(text.contains("RECONNECTING"));
+        assert!(text.contains("last confirmed 10:42:18"));
+        assert!(text.contains("operations"));
+    }
+
+    #[test]
+    fn input_state_preserves_paste_mouse_and_keyboard_contracts() {
+        let mut app = App::default();
+        assert_eq!(
+            app.handle(InputEvent::Paste("π pasted".into())),
+            UiAction::Paste(PastePayload::Inline("π pasted".into()))
+        );
+        assert_eq!(app.input, "π pasted");
+
+        assert_eq!(
+            app.handle(InputEvent::Key(KeyEvent::new(
+                KeyCode::Char('k'),
+                KeyModifiers::CONTROL,
+            ))),
+            UiAction::OpenPalette
+        );
+        assert!(app.palette_open);
+        assert_eq!(
+            app.handle(InputEvent::Key(KeyEvent::new(
+                KeyCode::Esc,
+                KeyModifiers::NONE,
+            ))),
+            UiAction::None
+        );
+        assert!(!app.palette_open);
+
+        assert_eq!(
+            app.handle(InputEvent::Key(KeyEvent::new(
+                KeyCode::Char('o'),
+                KeyModifiers::CONTROL,
+            ))),
+            UiAction::ToggleOperations
+        );
+        assert!(!app.operations_open);
+
+        app.handle(InputEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 2,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        }));
+        assert_eq!(app.focus, Focus::Stream);
+        assert_eq!(app.transcript_offset, 3);
+        assert_eq!(
+            app.handle(InputEvent::Key(KeyEvent::new(
+                KeyCode::Char('q'),
+                KeyModifiers::CONTROL,
+            ))),
+            UiAction::Quit
+        );
     }
     #[test]
     fn layout_breakpoints() {
@@ -2463,6 +2657,77 @@ mod tests {
         }
     }
 
+    struct FailingSurface;
+
+    impl UiSurface for FailingSurface {
+        fn draw(&mut self, _app: &App) -> io::Result<()> {
+            Err(io::Error::other("render failed"))
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeTerminalState {
+        enters: usize,
+        leaves: usize,
+    }
+
+    #[derive(Clone)]
+    struct FakeTerminalControl {
+        state: Rc<RefCell<FakeTerminalState>>,
+    }
+
+    impl TerminalControl for FakeTerminalControl {
+        fn enter(&mut self) -> io::Result<()> {
+            self.state.borrow_mut().enters += 1;
+            Ok(())
+        }
+
+        fn leave(&mut self) -> io::Result<()> {
+            self.state.borrow_mut().leaves += 1;
+            Ok(())
+        }
+    }
+
+    fn fake_terminal_control() -> (FakeTerminalControl, Rc<RefCell<FakeTerminalState>>) {
+        let state = Rc::new(RefCell::new(FakeTerminalState::default()));
+        (
+            FakeTerminalControl {
+                state: Rc::clone(&state),
+            },
+            state,
+        )
+    }
+
+    fn assert_single_terminal_leave(state: &Rc<RefCell<FakeTerminalState>>) {
+        let state = state.borrow();
+        assert_eq!(state.enters, 1);
+        assert_eq!(state.leaves, 1);
+    }
+
+    struct PollErrorInput;
+
+    impl InputSource for PollErrorInput {
+        fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+            Err(io::Error::other("input poll failed"))
+        }
+
+        fn read(&mut self) -> io::Result<Option<InputEvent>> {
+            Ok(None)
+        }
+    }
+
+    struct ReadErrorInput;
+
+    impl InputSource for ReadErrorInput {
+        fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+            Ok(true)
+        }
+
+        fn read(&mut self) -> io::Result<Option<InputEvent>> {
+            Err(io::Error::other("input read failed"))
+        }
+    }
+
     struct TestInput {
         events: VecDeque<InputEvent>,
         polls: usize,
@@ -2542,6 +2807,103 @@ mod tests {
         runner.run_without_terminal(&mut app).unwrap();
         assert_eq!(runner.surface.draws, 1);
         assert_eq!(runner.input.polls, 1);
+    }
+
+    #[test]
+    fn runner_propagates_render_failures_through_lifecycle_seam() {
+        let (_event_tx, event_rx, intent_tx, _intent_rx) = channels(1);
+        let mut runner = TerminalRunner::new(
+            FailingSurface,
+            TestInput {
+                events: VecDeque::new(),
+                polls: 0,
+            },
+            event_rx,
+            intent_tx,
+        );
+
+        let error = runner
+            .run_without_terminal(&mut App::default())
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "render failed");
+    }
+
+    #[test]
+    fn terminal_control_leaves_once_after_normal_quit() {
+        let (_event_tx, event_rx, intent_tx, _intent_rx) = channels(1);
+        let (control, state) = fake_terminal_control();
+        let mut runner = TerminalRunner::new(
+            TestSurface { draws: 0 },
+            TestInput {
+                events: VecDeque::from([quit_input()]),
+                polls: 0,
+            },
+            event_rx,
+            intent_tx,
+        );
+
+        runner
+            .run_with_terminal_control(&mut App::default(), control)
+            .unwrap();
+        assert_single_terminal_leave(&state);
+    }
+
+    #[test]
+    fn terminal_control_leaves_once_after_render_error() {
+        let (_event_tx, event_rx, intent_tx, _intent_rx) = channels(1);
+        let (control, state) = fake_terminal_control();
+        let mut runner = TerminalRunner::new(
+            FailingSurface,
+            TestInput {
+                events: VecDeque::new(),
+                polls: 0,
+            },
+            event_rx,
+            intent_tx,
+        );
+
+        let error = runner
+            .run_with_terminal_control(&mut App::default(), control)
+            .unwrap_err();
+        assert_eq!(error.to_string(), "render failed");
+        assert_single_terminal_leave(&state);
+    }
+
+    #[test]
+    fn terminal_control_leaves_once_after_input_poll_error() {
+        let (_event_tx, event_rx, intent_tx, _intent_rx) = channels(1);
+        let (control, state) = fake_terminal_control();
+        let mut runner = TerminalRunner::new(
+            TestSurface { draws: 0 },
+            PollErrorInput,
+            event_rx,
+            intent_tx,
+        );
+
+        let error = runner
+            .run_with_terminal_control(&mut App::default(), control)
+            .unwrap_err();
+        assert_eq!(error.to_string(), "input poll failed");
+        assert_single_terminal_leave(&state);
+    }
+
+    #[test]
+    fn terminal_control_leaves_once_after_input_read_error() {
+        let (_event_tx, event_rx, intent_tx, _intent_rx) = channels(1);
+        let (control, state) = fake_terminal_control();
+        let mut runner = TerminalRunner::new(
+            TestSurface { draws: 0 },
+            ReadErrorInput,
+            event_rx,
+            intent_tx,
+        );
+
+        let error = runner
+            .run_with_terminal_control(&mut App::default(), control)
+            .unwrap_err();
+        assert_eq!(error.to_string(), "input read failed");
+        assert_single_terminal_leave(&state);
     }
 
     #[test]

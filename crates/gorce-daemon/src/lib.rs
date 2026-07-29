@@ -2207,7 +2207,8 @@ fn timestamp_now() -> String {
     let mut year = 1970_u64;
     let mut remaining_days = days;
     loop {
-        let leap = year % 400 == 0 || (year % 4 == 0 && year % 100 != 0);
+        let leap =
+            year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100));
         let year_days = if leap { 366 } else { 365 };
         if remaining_days < year_days {
             break;
@@ -2218,8 +2219,11 @@ fn timestamp_now() -> String {
     let month_days = [31_u64, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut month = 1_u64;
     for (index, normal_days) in month_days.iter().enumerate() {
-        let leap_day =
-            usize::from(index == 1 && (year % 400 == 0 || (year % 4 == 0 && year % 100 != 0)));
+        let leap_day = usize::from(
+            index == 1
+                && (year.is_multiple_of(400)
+                    || (year.is_multiple_of(4) && !year.is_multiple_of(100))),
+        );
         let length = normal_days + leap_day as u64;
         if remaining_days < length {
             break;

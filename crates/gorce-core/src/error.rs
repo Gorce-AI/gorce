@@ -92,8 +92,8 @@ impl fmt::Display for CoreError {
                 conflict.entity, conflict.id, conflict.expected, conflict.actual
             ),
             Self::InvalidInput { field, reason } => write!(formatter, "invalid {field}: {reason}"),
-            Self::Duplicate { entity, id } => write!(formatter, "duplicate {:?} {id}", entity),
-            Self::NotFound { entity, id } => write!(formatter, "unknown {:?} {id}", entity),
+            Self::Duplicate { entity, id } => write!(formatter, "duplicate {entity:?} {id}"),
+            Self::NotFound { entity, id } => write!(formatter, "unknown {entity:?} {id}"),
             Self::InvalidTransition { task_id, from, to } => {
                 write!(
                     formatter,

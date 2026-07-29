@@ -109,7 +109,7 @@ async fn run(cli: Cli) -> Result<(), SdkError> {
                     cli.output,
                     "daemon.status",
                     json!({"status": status, "version": version, "endpoint": client.endpoint()}),
-                    format!("daemon is {:?} ({})", status, version),
+                    format!("daemon is {status:?} ({version})"),
                 );
             }
             "stop" => {

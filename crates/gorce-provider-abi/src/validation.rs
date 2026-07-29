@@ -101,7 +101,7 @@ fn validate_schema_node(
     }
     for metadata_key in ["title", "description"] {
         if let Some(value) = object.get(metadata_key) {
-            if value.as_str().map_or(true, |text| {
+            if value.as_str().is_none_or(|text| {
                 text.is_empty()
                     || text.chars().count() > MAX_RUNTIME_STRING_BYTES
                     || text.chars().any(char::is_control)
@@ -153,7 +153,7 @@ fn validate_schema_node(
                 .ok_or_else(|| ValidationError::new(field, "required names must be strings"))?;
             if name.is_empty()
                 || !names.insert(name)
-                || properties.map_or(true, |properties| !properties.contains_key(name))
+                || properties.is_none_or(|properties| !properties.contains_key(name))
             {
                 return Err(ValidationError::new(
                     field,
@@ -223,7 +223,7 @@ fn validate_integer_keyword(
     maximum: u64,
 ) -> ValidationResult<()> {
     if let Some(value) = object.get(keyword) {
-        if json_schema_integer(value).map_or(true, |value| value > maximum) {
+        if json_schema_integer(value).is_none_or(|value| value > maximum) {
             return Err(ValidationError::new(
                 field,
                 format!("{keyword} is invalid or oversized"),
@@ -239,7 +239,7 @@ fn validate_number_keyword(
     field: &str,
 ) -> ValidationResult<()> {
     if let Some(value) = object.get(keyword) {
-        if value.as_f64().map_or(true, |value| !value.is_finite()) {
+        if value.as_f64().is_none_or(|value| !value.is_finite()) {
             return Err(ValidationError::new(
                 field,
                 format!("{keyword} must be finite"),
@@ -358,7 +358,7 @@ fn json_schema_integer(value: &Value) -> Option<u64> {
         return None;
     }
     let mut digits = digits;
-    digits.extend(std::iter::repeat('0').take(power as usize));
+    digits.extend(std::iter::repeat_n('0', power as usize));
     digits.parse().ok()
 }
 

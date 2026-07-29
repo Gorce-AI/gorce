@@ -8,6 +8,23 @@ permissions:
   contents: read
 
 jobs:
+  msrv:
+    name: Rust 1.88.0 MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt, clippy
+      - name: Check workspace at MSRV
+        run: cargo check --workspace --all-targets --locked
+      - name: Run workspace tests at MSRV
+        run: cargo test --workspace --locked
+      - name: Run workspace Clippy at MSRV
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
   checks:
     runs-on: ${{ matrix.os }}
     strategy:

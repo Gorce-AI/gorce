@@ -1081,7 +1081,7 @@ impl RuntimeCapabilities {
 
 fn parse_tool_id(value: &str) -> ValidationResult<(&str, &str, &str)> {
     let rest = value
-        .strip_prefix(&format!("{}/tool/", PROVIDER_ABI_VERSION))
+        .strip_prefix(&format!("{PROVIDER_ABI_VERSION}/tool/"))
         .ok_or_else(|| ValidationError::new("tool_id", "tool ID is not a v1 host ID"))?;
     let (digest, rest) = rest
         .split_once('/')

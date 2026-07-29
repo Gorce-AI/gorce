@@ -643,7 +643,7 @@ mod tests {
             "occurred_at": "2026-01-01T00:00:00Z",
             "payload": {}
         });
-        let body = format!("data: {}\n\n", event);
+        let body = format!("data: {event}\n\n");
         let (endpoint, server) = one_shot_server(200, "text/event-stream", &body);
         let client = Client::new(ClientConfig::unauthenticated(endpoint)).unwrap();
         let mut stream = client.event_stream(project_id, Some(PublicEventCursor("g1-4-1".into())));
