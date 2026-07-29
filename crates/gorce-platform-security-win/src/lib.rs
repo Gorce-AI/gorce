@@ -529,7 +529,7 @@ mod ffi {
         let source_start = source as usize;
         let minimum_sid_len = size_of::<SID>() - size_of::<u32>();
         if source_start < start
-            || source_start % align_of::<u32>() != 0
+            || !source_start.is_multiple_of(align_of::<u32>())
             || match source_start.checked_add(minimum_sid_len) {
                 Some(value) => value > end,
                 None => true,
