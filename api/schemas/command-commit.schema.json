@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/command-commit.schema.json",
+  "title": "CommandCommit",
+  "description": "Daemon commit evidence. The daemon assigns batch_id and batch_sequence and returns durable public cursors; no canonical event batch is exposed for client mutation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project_id", "batch_id", "batch_sequence", "public_cursors", "result", "evidence_refs"],
+  "properties": {
+    "project_id": { "type": "string", "format": "uuid" },
+    "batch_id": {
+      "$ref": "https://gorce.dev/schemas/uuidv7.schema.json",
+      "description": "Daemon-assigned canonical persisted batch identifier."
+    },
+    "batch_sequence": { "type": "integer", "minimum": 1, "description": "Daemon-assigned project journal sequence." },
+    "public_cursors": {
+      "type": "array",
+      "description": "Durable opaque cursors for public events emitted by this commit. Clients must reuse them verbatim.",
+      "items": { "$ref": "https://gorce.dev/schemas/public-event-cursor.schema.json" }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "resource_refs"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["accepted", "created", "updated", "lifecycle_changed"] },
+        "resource_refs": {
+          "type": "array",
+          "items": { "$ref": "https://gorce.dev/schemas/resource-reference.schema.json" }
+        }
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "$ref": "https://gorce.dev/schemas/evidence-reference.schema.json" }
+    }
+  },
+  "examples": [
+    {
+      "project_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+      "batch_id": "018f0f5e-7b12-7abd-8def-0123456789ab",
+      "batch_sequence": 7,
+      "public_cursors": ["g1-7-0"],
+      "result": {
+        "kind": "created",
+        "resource_refs": [
+          { "kind": "task", "id": "018f0f5e-7b12-7abe-8def-0123456789ab" }
+        ]
+      },
+      "evidence_refs": []
+    }
+  ]
+}

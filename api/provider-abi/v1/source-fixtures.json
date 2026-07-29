@@ -1,0 +1,162 @@
+{
+  "positive": [
+    {
+      "kind": "source",
+      "value": {
+        "source": {
+          "canonical_git_url": "https://example.com/gorce/provider",
+          "commit_hash_algorithm": "sha1",
+          "resolved_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "source_content_digest_algorithm": "sha256:gorce.provider/source-content/v1",
+        "source_content_digest": "e017f584cb6c7aa56634823fdce6298343fd27208deae39bdea5d77e9fca8fab",
+        "manifest": "{\"format\":\"gorce.provider/v1\",\"provider_id\":\"source-fixture\",\"display_name\":\"Deterministic Mock Web Search\",\"version\":\"1.0.0\",\"package\":{\"files\":[{\"path\":\"bin/provider\",\"size\":17,\"sha256\":\"cca726f4312f10d31623e1e22a0493fd92b93159ce1346cf49b10c12f3126528\",\"mode\":33261}],\"executable\":{\"path\":\"bin/provider\",\"sha256\":\"cca726f4312f10d31623e1e22a0493fd92b93159ce1346cf49b10c12f3126528\"}},\"auth_methods\":[{\"kind\":\"api_key\",\"id\":\"search_api_key\",\"credential_class\":\"search-api-key\",\"label\":\"Search API key\"}],\"capabilities\":{\"auth_method_ids\":[\"search_api_key\"],\"credential_classes\":[\"search-api-key\"],\"network_origins\":[]},\"tools\":[{\"name\":\"web_search\",\"description\":\"Search\",\"input_schema\":{\"type\":\"object\",\"additionalProperties\":false},\"output_schema\":{\"type\":\"object\",\"additionalProperties\":false},\"side_effects\":[\"network_read\"],\"auth_method_id\":\"search_api_key\",\"credential_class\":\"search-api-key\",\"network_origins\":[]}]}",
+        "manifest_digest": "84221a418209275d4ebf6a7c46922e61d2b9e59fcb20a00a7e59250620c606ff",
+        "files": [
+          {
+            "path": "bin/provider",
+            "kind": "regular_file",
+            "mode": 33261,
+            "size": 17,
+            "sha256": "cca726f4312f10d31623e1e22a0493fd92b93159ce1346cf49b10c12f3126528",
+            "content": [
+              115,
+              111,
+              117,
+              114,
+              99,
+              101,
+              32,
+              101,
+              120,
+              101,
+              99,
+              117,
+              116,
+              97,
+              98,
+              108,
+              101
+            ]
+          }
+        ],
+        "executable": {
+          "path": "bin/provider",
+          "size": 17,
+          "sha256": "cca726f4312f10d31623e1e22a0493fd92b93159ce1346cf49b10c12f3126528"
+        },
+        "manifest_mode": 33188
+      }
+    }
+  ],
+  "negative": [
+    {
+      "reason": "abbreviated commit",
+      "changes": {
+        "source.resolved_commit": "aaaa"
+      }
+    },
+    {
+      "reason": "wrong commit algorithm length",
+      "changes": {
+        "source.commit_hash_algorithm": "sha256"
+      }
+    },
+    {
+      "reason": "moving source identity",
+      "changes": {
+        "source.ref": "main"
+      }
+    },
+    {
+      "reason": "encoded Git authority",
+      "changes": {
+        "source.canonical_git_url": "https://example.com%2frepo/provider"
+      }
+    },
+    {
+      "reason": "encoded Git path",
+      "changes": {
+        "source.canonical_git_url": "https://example.com/gorce%2Fprovider"
+      }
+    },
+    {
+      "reason": "local path source",
+      "changes": {
+        "source.canonical_git_url": "/tmp/provider"
+      }
+    },
+    {
+      "reason": "leading-zero Git port",
+      "changes": {
+        "source.canonical_git_url": "https://example.com:080/gorce/provider"
+      }
+    },
+    {
+      "reason": "source content digest substitution",
+      "changes": {
+        "source_content_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "reason": "file content substitution",
+      "changes": {
+        "files.0.content": [
+          99,
+          104,
+          97,
+          110,
+          103,
+          101,
+          100
+        ]
+      }
+    },
+    {
+      "reason": "mode-only change",
+      "changes": {
+        "files.0.mode": 33188
+      }
+    },
+    {
+      "reason": "manifest mode substitution",
+      "changes": {
+        "manifest_mode": 33261
+      }
+    },
+    {
+      "reason": "unsafe source path",
+      "changes": {
+        "files.0.path": "../provider"
+      }
+    },
+    {
+      "reason": "missing file mode",
+      "changes": {
+        "files.0.mode": null
+      }
+    },
+    {
+      "reason": "symlink file kind",
+      "changes": {
+        "files.0.kind": "symlink"
+      }
+    },
+    {
+      "reason": "executable path substitution",
+      "operation": "change_manifest_executable_path"
+    },
+    {
+      "reason": "extra source file",
+      "operation": "append_extra_file"
+    },
+    {
+      "reason": "publisher authority in source manifest",
+      "operation": "add_publisher_to_manifest"
+    },
+    {
+      "reason": "manifest UTF-8 byte bound",
+      "operation": "oversized_manifest"
+    }
+  ]
+}

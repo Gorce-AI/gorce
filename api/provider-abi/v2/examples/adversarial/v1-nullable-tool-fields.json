@@ -1,0 +1,10 @@
+{
+  "name": "legacy",
+  "description": "legacy nullable fields are not V2 authentication",
+  "input_schema": {"type": "object", "additionalProperties": false},
+  "output_schema": {"type": "object", "additionalProperties": false},
+  "side_effects": ["none"],
+  "auth_method_id": null,
+  "credential_class": null,
+  "network_origins": []
+}

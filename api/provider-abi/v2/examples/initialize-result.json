@@ -1,0 +1,74 @@
+{
+  "abi_version": "gorce.provider/v2",
+  "provider_id": "v2-fixture",
+  "package_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tools": [
+    {
+      "tool_id": "gorce.provider/v2/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/v2-fixture/no_auth",
+      "name": "no_auth",
+      "description": "No-auth representation",
+      "input_schema": {"type": "object", "additionalProperties": false},
+      "output_schema": {"type": "object", "additionalProperties": false},
+      "side_effects": ["none"],
+      "authentication": {"kind": "none"},
+      "network_origins": []
+    },
+    {
+      "tool_id": "gorce.provider/v2/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/v2-fixture/host_auth",
+      "name": "host_auth",
+      "description": "Host-secret representation",
+      "input_schema": {"type": "object", "additionalProperties": false},
+      "output_schema": {"type": "object", "additionalProperties": false},
+      "side_effects": ["network_read"],
+      "authentication": {
+        "kind": "host_secret",
+        "auth_method_id": "api",
+        "credential_class": "secret",
+        "delivery_kind": "api_key"
+      },
+      "network_origins": []
+    },
+    {
+      "tool_id": "gorce.provider/v2/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/v2-fixture/codex_session",
+      "name": "codex_session",
+      "description": "Codex policy representation",
+      "input_schema": {"type": "object", "additionalProperties": false},
+      "output_schema": {"type": "object", "additionalProperties": false},
+      "side_effects": ["network_read"],
+      "authentication": {
+        "kind": "official_cli_session",
+        "policy_id": "gorce.official-cli/codex/v1"
+      },
+      "network_origins": []
+    },
+    {
+      "tool_id": "gorce.provider/v2/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/v2-fixture/claude_session",
+      "name": "claude_session",
+      "description": "Claude Code policy representation",
+      "input_schema": {"type": "object", "additionalProperties": false},
+      "output_schema": {"type": "object", "additionalProperties": false},
+      "side_effects": ["network_read"],
+      "authentication": {
+        "kind": "official_cli_session",
+        "policy_id": "gorce.official-cli/claude-code/v1"
+      },
+      "network_origins": []
+    }
+  ],
+  "capabilities": {
+    "auth_method_ids": ["api"],
+    "tool_ids": [
+      "gorce.provider/v2/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/v2-fixture/no_auth",
+      "gorce.provider/v2/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/v2-fixture/host_auth",
+      "gorce.provider/v2/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/v2-fixture/codex_session",
+      "gorce.provider/v2/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/v2-fixture/claude_session"
+    ],
+    "credential_classes": ["secret"],
+    "network_origins": [],
+    "side_effects": ["none", "network_read"],
+    "official_cli_policy_ids": [
+      "gorce.official-cli/codex/v1",
+      "gorce.official-cli/claude-code/v1"
+    ]
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/provider-abi/v1/initialize-result.schema.json",
+  "title": "gorce.provider/v1 initialize result",
+  "$comment": "Tool descriptions use Unicode character limits inherited from the signed manifest; local schema property names are limited to 128 UTF-8 bytes by Rust/Python semantic validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["abi_version", "provider_id", "package_digest", "tools", "capabilities"],
+  "properties": {
+    "abi_version": {"const": "gorce.provider/v1"},
+    "provider_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+    "package_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "tools": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/tool"}},
+    "capabilities": {
+      "type": "object", "additionalProperties": false, "required": ["auth_method_ids", "tool_ids", "credential_classes", "network_origins", "side_effects"],
+      "properties": {
+        "auth_method_ids": {"type": "array", "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}}, "tool_ids": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string"}},
+        "credential_classes": {"type": "array", "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}}, "network_origins": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "pattern": "^https://"}},
+        "side_effects": {"type": "array", "items": {"enum": ["none", "network_read", "network_write", "local_write"]}}
+      }
+    }
+  },
+  "$defs": {
+    "localSchema": {
+      "$comment": "Local schema metadata and string lengths count Unicode scalar values; property names are limited to 128 UTF-8 bytes by Rust/Python semantic validation.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {"enum": ["object", "array", "string", "integer", "number", "boolean", "null"]},
+        "title": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"},
+        "description": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"},
+        "properties": {"type": "object", "maxProperties": 64, "propertyNames": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"}, "additionalProperties": {"$ref": "#/$defs/localSchema"}},
+        "required": {"type": "array", "maxItems": 64, "items": {"type": "string", "minLength": 1}},
+        "items": {"$ref": "#/$defs/localSchema"},
+        "additionalProperties": {"type": "boolean"},
+        "enum": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true},
+        "const": {},
+        "minLength": {"type": "integer", "minimum": 0, "maximum": 4096},
+        "maxLength": {"type": "integer", "minimum": 0, "maximum": 4096},
+        "minimum": {"type": "number"},
+        "maximum": {"type": "number"},
+        "minItems": {"type": "integer", "minimum": 0, "maximum": 256},
+        "maxItems": {"type": "integer", "minimum": 0, "maximum": 256}
+      }
+    },
+    "tool": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tool_id", "name", "description", "input_schema", "output_schema", "side_effects", "auth_method_id", "credential_class", "network_origins"],
+      "properties": {
+        "tool_id": {"type": "string", "maxLength": 256, "pattern": "^gorce\\.provider/v1/tool/[0-9a-f]{64}/"}, "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}, "description": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"},
+        "input_schema": {"allOf": [{"$ref": "#/$defs/localSchema"}, {"type": "object", "required": ["type"], "properties": {"type": {"const": "object"}}}]}, "output_schema": {"$ref": "#/$defs/localSchema"}, "side_effects": {"type": "array", "uniqueItems": true, "items": {"enum": ["none", "network_read", "network_write", "local_write"]}},
+        "auth_method_id": {"type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}, "credential_class": {"type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}, "network_origins": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "pattern": "^https://"}}
+      }
+    }
+  },
+  "examples": [{
+    "abi_version": "gorce.provider/v1",
+    "provider_id": "mock-web-search",
+    "package_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tools": [{"tool_id": "gorce.provider/v1/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/mock-web-search/web_search", "name": "web_search", "description": "Search", "input_schema": {"type": "object"}, "output_schema": {"type": "object"}, "side_effects": ["network_read"], "auth_method_id": "search_api_key", "credential_class": "search-api-key", "network_origins": []}],
+    "capabilities": {"auth_method_ids": ["search_api_key"], "tool_ids": ["gorce.provider/v1/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/mock-web-search/web_search"], "credential_classes": ["search-api-key"], "network_origins": [], "side_effects": ["network_read"]}
+  }]
+}

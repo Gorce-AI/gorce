@@ -2,7 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gorce.dev/schemas/event-batch.schema.json",
   "title": "EventBatch",
-  "description": "Canonical persisted event batch for v0. A batch must have at least one event, contiguous zero-based ordinals, and a valid command idempotency key. batch_id is a UUIDv7 immutable identifier that must be unique across all accepted persisted batches; it must never be reused for a different command. A retry with the same idempotency_key and the same command payload returns the original accepted batch without appending another batch. Reuse of an idempotency_key with a different command payload is rejected as a conflict. The deterministic command payload digest input is the UTF-8 canonical JSON serialization of {\"arguments\": <arguments>, \"name\": <name>} with object members sorted lexicographically; idempotency_key is not part of that payload.",
+  "x-daemon-only": true,
+  "description": "Daemon-only canonical persisted event batch for v0. This contract is not an external write request and is never accepted from clients. A batch must have at least one event, contiguous zero-based ordinals, and canonical storage metadata. batch_id is a UUIDv7 immutable identifier that must be unique across all accepted persisted batches; it must never be reused for a different command. The persisted command idempotency metadata is internal to the daemon and is not the HTTP Idempotency-Key request field.",
   "type": "object",
   "additionalProperties": false,
   "required": ["format", "project_id", "batch_id", "batch_sequence", "committed_at", "actor", "command", "base_revisions", "events", "referenced_blobs"],
@@ -35,7 +36,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "arguments", "idempotency_key"],
-      "description": "Canonical command metadata. The same idempotency key and same command payload is an idempotent replay; the same key with a different payload is a conflict.",
+      "description": "Daemon-only canonical command metadata. The persisted idempotency_key is storage metadata and is not accepted in the external command request, which carries Idempotency-Key as an HTTP header.",
       "properties": {
         "name": {
           "type": "string",
@@ -49,7 +50,8 @@
         "idempotency_key": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 256
+          "maxLength": 256,
+          "description": "Daemon-only persisted idempotency metadata; clients must not submit this field."
         }
       }
     },

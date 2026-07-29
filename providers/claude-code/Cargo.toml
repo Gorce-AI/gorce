@@ -1,0 +1,21 @@
+[package]
+name = "claude-code"
+description = "Anthropic subscription (claude.ai OAuth) gorce.provider/v1 package with hosted web_search and web_fetch tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gorce-provider-abi = { path = "../../crates/gorce-provider-abi" }
+gorce-provider-runtime = { path = "../../crates/gorce-provider-runtime" }
+ed25519-dalek = { version = "2.1.1", default-features = false, features = ["std"] }
+serde_json = "1.0.114"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "claude-code"
+path = "src/main.rs"

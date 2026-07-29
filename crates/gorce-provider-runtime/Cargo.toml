@@ -1,0 +1,17 @@
+[package]
+name = "gorce-provider-runtime"
+description = "Shared gorce.provider/v1 session loop and packaging helpers for provider binaries"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gorce-provider-abi = { path = "../gorce-provider-abi" }
+ed25519-dalek = { version = "2.1.1", default-features = false, features = ["std"] }
+serde_json = "1.0.114"
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
+
+[lints]
+workspace = true

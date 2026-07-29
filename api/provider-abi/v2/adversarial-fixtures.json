@@ -1,0 +1,35 @@
+{
+  "authentication": [
+    {"name": "missing-kind", "value": {}},
+    {"name": "unknown-kind", "value": {"kind": "oauth"}},
+    {"name": "none-with-v1-auth-method", "value": {"kind": "none", "auth_method_id": "legacy"}},
+    {"name": "none-with-v1-credential-class", "value": {"kind": "none", "credential_class": "legacy"}},
+    {"name": "none-with-v1-delivery-kind", "value": {"kind": "none", "delivery_kind": "api_key"}},
+    {"name": "host-secret-without-method", "value": {"kind": "host_secret", "credential_class": "secret", "delivery_kind": "api_key"}},
+    {"name": "host-secret-without-class", "value": {"kind": "host_secret", "auth_method_id": "api", "delivery_kind": "api_key"}},
+    {"name": "host-secret-without-delivery-kind", "value": {"kind": "host_secret", "auth_method_id": "api", "credential_class": "secret"}},
+    {"name": "official-cli-with-credential-class", "value": {"kind": "official_cli_session", "policy_id": "gorce.official-cli/codex/v1", "credential_class": "legacy"}},
+    {"name": "official-cli-with-delivery-kind", "value": {"kind": "official_cli_session", "policy_id": "gorce.official-cli/claude-code/v1", "delivery_kind": "access_token"}},
+    {"name": "codex-policy-v2", "value": {"kind": "official_cli_session", "policy_id": "gorce.official-cli/codex/v2"}},
+    {"name": "claude-policy-v2", "value": {"kind": "official_cli_session", "policy_id": "gorce.official-cli/claude-code/v2"}}
+  ],
+  "secret_delivery": [
+    {"name": "none-null", "file": "examples/adversarial/none-secret-delivery.json"},
+    {"name": "official-cli-object", "file": "examples/adversarial/official-cli-secret-delivery.json"},
+    {"name": "host-secret-missing", "file": "examples/adversarial/host-secret-missing-delivery.json"},
+    {"name": "host-secret-null", "file": "examples/adversarial/host-secret-null-delivery.json"}
+  ],
+  "cross_object_swaps": [
+    "cross-method-swap",
+    "cross-class-swap",
+    "cross-delivery-kind-swap",
+    "cross-tool-swap",
+    "cross-policy-swap",
+    {"name": "runtime-capability-escalation", "file": "examples/adversarial/runtime-capability-escalation.json"}
+  ],
+  "version_and_legacy": [
+    {"name": "v1-format", "file": "examples/adversarial/v1-format.json"},
+    {"name": "v1-nullable-tool-fields", "file": "examples/adversarial/v1-nullable-tool-fields.json"},
+    {"name": "v1-tool-id", "value": "gorce.provider/v1/tool/<digest>/provider/tool"}
+  ]
+}

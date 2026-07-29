@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/provider-abi/v1/signed-package.schema.json",
+  "title": "Signed gorce.provider/v1 package envelope",
+  "$comment": "The manifest field is exact UTF-8 text: maxLength is a JSON Schema character prefilter, while the host enforces the 262,144-byte bound before signature verification.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["archive_digest", "manifest", "signature"],
+  "properties": {
+    "archive_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Host-computed immutable archive digest; never a manifest field."},
+    "manifest": {"type": "string", "minLength": 1, "maxLength": 262144, "description": "Exact UTF-8 manifest bytes represented as JSON text."},
+    "signature": {
+      "type": "object", "additionalProperties": false, "required": ["algorithm", "public_key", "signature"],
+      "properties": {
+        "algorithm": {"const": "ed25519"},
+        "public_key": {"type": "string", "minLength": 44, "maxLength": 44, "pattern": "^[A-Za-z0-9+/]{43}=$"},
+        "signature": {"type": "string", "minLength": 88, "maxLength": 88, "pattern": "^[A-Za-z0-9+/]{86}==$"}
+      }
+    }
+  },
+  "examples": [{
+    "archive_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "manifest": "{\"format\":\"gorce.provider/v1\"}",
+    "signature": {"algorithm": "ed25519", "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="}
+  }]
+}

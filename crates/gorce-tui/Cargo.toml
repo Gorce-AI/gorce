@@ -8,7 +8,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-gorce-sdk = { path = "../gorce-sdk" }
+crossterm = "=0.29.0"
+ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm_0_29"] }
 
 [lints]
 workspace = true

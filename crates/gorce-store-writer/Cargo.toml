@@ -1,0 +1,27 @@
+[package]
+name = "gorce-store-writer"
+description = "Private daemon-owned mutable storage boundary for Gorce"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+gorce-core = { path = "../gorce-core" }
+gorce-provider-abi = { path = "../gorce-provider-abi" }
+gorce-platform-security = { path = "../gorce-platform-security" }
+gorce-protocol = { path = "../gorce-protocol" }
+fs2 = "0.4.3"
+rusqlite = { version = "0.31.0", features = ["bundled"] }
+serde = "1.0.197"
+serde_json = "1.0.114"
+sha2 = "0.10.8"
+uuid = { version = "1.7.0", features = ["v7"] }
+
+[dev-dependencies]
+gorce-provider-abi = { path = "../gorce-provider-abi", features = ["test-fixtures"] }
+
+[lints]
+workspace = true

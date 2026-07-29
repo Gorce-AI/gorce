@@ -1,0 +1,10 @@
+{
+  "invocation": {
+    "package_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tool_id": "gorce.provider/v2/tool/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/v2-fixture/codex_session",
+    "invocation_id": "swap-policy",
+    "authentication": {"kind": "official_cli_session", "policy_id": "gorce.official-cli/claude-code/v1"},
+    "deadline_unix_ms": 1893456030000
+  },
+  "input": {}
+}

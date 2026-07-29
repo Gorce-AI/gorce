@@ -1,0 +1,179 @@
+#![forbid(unsafe_code)]
+//! Anthropic subscription provider package.
+//!
+//! Ported from the cliAgent `claude-code` plugin: a public-client PKCE flow
+//! against claude.ai/console.anthropic.com and two provider-native tools,
+//! `web_search` and `web_fetch`, served against the Anthropic API origin.
+
+use ed25519_dalek::SigningKey;
+use gorce_provider_abi::{
+    compute_archive_digest, derive_tool_id, digest_hex, fingerprint_hex, AuthMethod,
+    CallbackPolicy, Capabilities, ExecutableEntrypoint, Manifest, ManifestPackage,
+    OAuthAuthorizationCodePkceDeclaration, PackageFile, PackagePublisher, SideEffect,
+    ToolDeclaration, ABI_FORMAT,
+};
+use serde_json::json;
+
+pub const PROVIDER_ID: &str = "claude-code";
+pub const TOOL_WEB_SEARCH: &str = "web_search";
+pub const TOOL_WEB_FETCH: &str = "web_fetch";
+pub const AUTH_METHOD_ID: &str = "claude_oauth";
+pub const CREDENTIAL_CLASS: &str = "anthropic-oauth";
+pub const EXECUTABLE_PATH: &str = "bin/claude-code";
+
+/// Vendor-issued public-client identifier used by the claude.ai subscription flow.
+pub const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+pub const AUTHORIZATION_ENDPOINT: &str = "https://claude.ai/oauth/authorize";
+pub const TOKEN_ENDPOINT: &str = "https://console.anthropic.com/v1/oauth/token";
+pub const API_ORIGIN: &str = "https://api.anthropic.com";
+
+pub const SENTINEL_SECRET: &str = "claude-code-secret-sentinel";
+
+/// A bounded deterministic signing fixture. It is test material only; it is
+/// not a publisher key and must never be used for a production package.
+pub const FIXTURE_SEED: [u8; 32] = [0x51; 32];
+
+pub fn signing_key() -> SigningKey {
+    SigningKey::from_bytes(&FIXTURE_SEED)
+}
+
+pub fn manifest_for_executable(executable_bytes: &[u8]) -> Manifest {
+    let public_key = signing_key().verifying_key().to_bytes();
+    let executable_sha256 = digest_hex(executable_bytes);
+    Manifest {
+        format: ABI_FORMAT.to_owned(),
+        provider_id: PROVIDER_ID.to_owned(),
+        display_name: "Claude Code (Anthropic subscription)".to_owned(),
+        version: "0.1.0".to_owned(),
+        publisher: Some(PackagePublisher {
+            name: "Gorce community providers fixture".to_owned(),
+            fingerprint: fingerprint_hex(&public_key),
+        }),
+        package: ManifestPackage {
+            files: vec![PackageFile {
+                path: EXECUTABLE_PATH.to_owned(),
+                size: executable_bytes.len() as u64,
+                sha256: executable_sha256.clone(),
+            }],
+            executable: ExecutableEntrypoint {
+                path: EXECUTABLE_PATH.to_owned(),
+                sha256: executable_sha256,
+            },
+        },
+        auth_methods: vec![AuthMethod::OauthAuthorizationCodePkce(
+            OAuthAuthorizationCodePkceDeclaration {
+                id: AUTH_METHOD_ID.to_owned(),
+                credential_class: CREDENTIAL_CLASS.to_owned(),
+                label: "Claude.ai subscription (OAuth)".to_owned(),
+                client_type: "public".to_owned(),
+                client_id: OAUTH_CLIENT_ID.to_owned(),
+                authorization_endpoint: AUTHORIZATION_ENDPOINT.to_owned(),
+                token_endpoint: TOKEN_ENDPOINT.to_owned(),
+                approved_origins: vec![
+                    "https://claude.ai".to_owned(),
+                    "https://console.anthropic.com".to_owned(),
+                ],
+                scopes: vec![
+                    "org:create_api_key".to_owned(),
+                    "user:profile".to_owned(),
+                    "user:inference".to_owned(),
+                ],
+                callback: CallbackPolicy::HostManaged,
+                grant_type: "authorization_code".to_owned(),
+                pkce_method: "S256".to_owned(),
+            },
+        )],
+        capabilities: Capabilities {
+            auth_method_ids: vec![AUTH_METHOD_ID.to_owned()],
+            credential_classes: vec![CREDENTIAL_CLASS.to_owned()],
+            network_origins: vec![
+                API_ORIGIN.to_owned(),
+                "https://claude.ai".to_owned(),
+                "https://console.anthropic.com".to_owned(),
+            ],
+        },
+        tools: vec![
+            ToolDeclaration {
+                name: TOOL_WEB_SEARCH.to_owned(),
+                description: "Anthropic-hosted web search surfaced as a provider tool".to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "minLength": 1, "maxLength": 128},
+                        "max_results": {"type": "integer", "minimum": 1, "maximum": 5}
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                }),
+                output_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "results": {
+                            "type": "array",
+                            "maxItems": 5,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"},
+                                    "url": {"type": "string"},
+                                    "snippet": {"type": "string"}
+                                },
+                                "required": ["title", "url", "snippet"],
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "required": ["query", "results"],
+                    "additionalProperties": false
+                }),
+                side_effects: vec![SideEffect::NetworkRead],
+                auth_method_id: Some(AUTH_METHOD_ID.to_owned()),
+                credential_class: Some(CREDENTIAL_CLASS.to_owned()),
+                network_origins: vec![API_ORIGIN.to_owned()],
+            },
+            ToolDeclaration {
+                name: TOOL_WEB_FETCH.to_owned(),
+                description: "Anthropic-hosted page fetch surfaced as a provider tool".to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "minLength": 1, "maxLength": 2048}
+                    },
+                    "required": ["url"],
+                    "additionalProperties": false
+                }),
+                output_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string"},
+                        "content": {"type": "string"}
+                    },
+                    "required": ["url", "content"],
+                    "additionalProperties": false
+                }),
+                side_effects: vec![SideEffect::NetworkRead],
+                auth_method_id: Some(AUTH_METHOD_ID.to_owned()),
+                credential_class: Some(CREDENTIAL_CLASS.to_owned()),
+                network_origins: vec![API_ORIGIN.to_owned()],
+            },
+        ],
+    }
+}
+
+pub fn archive_bytes_for_executable(executable_bytes: &[u8]) -> Vec<u8> {
+    gorce_provider_runtime::packaging::build_archive(
+        &manifest_for_executable(executable_bytes),
+        &signing_key(),
+        EXECUTABLE_PATH,
+        executable_bytes,
+    )
+}
+
+pub fn tool_id_for(archive_bytes: &[u8], tool_name: &str) -> String {
+    derive_tool_id(
+        &compute_archive_digest(archive_bytes),
+        PROVIDER_ID,
+        tool_name,
+    )
+}

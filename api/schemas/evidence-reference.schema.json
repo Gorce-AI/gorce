@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/evidence-reference.schema.json",
+  "title": "EvidenceReference",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "id"],
+  "properties": {
+    "kind": { "const": "evidence_bundle" },
+    "id": { "type": "string", "format": "uuid" }
+  }
+}

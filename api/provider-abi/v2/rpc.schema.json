@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/provider-abi/v2/rpc.schema.json",
+  "title": "gorce.provider/v2 JSON-RPC representation",
+  "$comment": "This schema is representation-only. It does not admit execution authority, prompts, result mappings, budgets, adapters, login, or status policy.",
+  "oneOf": [
+    {"$ref": "#/$defs/initialize"},
+    {"$ref": "#/$defs/invoke"},
+    {"$ref": "#/$defs/connectionDiagnostic"}
+  ],
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._:-]+$"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+    "toolId": {"type": "string", "pattern": "^gorce\\.provider/v2/tool/[0-9a-f]{64}/[a-z0-9][a-z0-9._-]{0,63}/[a-z0-9][a-z0-9._-]{0,63}$"},
+    "policyId": {"enum": ["gorce.official-cli/codex/v1", "gorce.official-cli/claude-code/v1"]},
+    "authentication": {"oneOf": [
+      {"type": "object", "additionalProperties": false, "required": ["kind"], "properties": {"kind": {"const": "none"}}},
+      {"type": "object", "additionalProperties": false, "required": ["kind", "auth_method_id", "credential_class", "delivery_kind"], "properties": {"kind": {"const": "host_secret"}, "auth_method_id": {"$ref": "#/$defs/identifier"}, "credential_class": {"$ref": "#/$defs/identifier"}, "delivery_kind": {"enum": ["api_key", "access_token"]}}},
+      {"type": "object", "additionalProperties": false, "required": ["kind", "policy_id"], "properties": {"kind": {"const": "official_cli_session"}, "policy_id": {"$ref": "#/$defs/policyId"}}}
+    ]},
+    "initialize": {
+      "type": "object", "additionalProperties": false, "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {"jsonrpc": {"const": "2.0"}, "id": {"$ref": "#/$defs/id"}, "method": {"const": "gorce.initialize"}, "params": {"$ref": "#/$defs/initializeParams"}}
+    },
+    "initializeParams": {
+      "type": "object", "additionalProperties": false, "required": ["version_range", "limits"],
+      "properties": {
+        "version_range": {"type": "object", "additionalProperties": false, "required": ["minimum", "maximum"], "properties": {"minimum": {"const": "gorce.provider/v2"}, "maximum": {"const": "gorce.provider/v2"}}},
+        "limits": {"type": "object", "additionalProperties": false, "required": ["max_frame_bytes", "max_json_depth", "max_members", "max_timeout_ms"], "properties": {"max_frame_bytes": {"type": "integer", "minimum": 1, "maximum": 65536}, "max_json_depth": {"type": "integer", "minimum": 1, "maximum": 16}, "max_members": {"type": "integer", "minimum": 1, "maximum": 256}, "max_timeout_ms": {"type": "integer", "minimum": 1, "maximum": 120000}}}
+      }
+    },
+    "invocation": {
+      "type": "object", "additionalProperties": false, "required": ["package_digest", "tool_id", "invocation_id", "authentication", "deadline_unix_ms"],
+      "properties": {"package_digest": {"$ref": "#/$defs/digest"}, "tool_id": {"$ref": "#/$defs/toolId"}, "invocation_id": {"$ref": "#/$defs/id"}, "authentication": {"$ref": "#/$defs/authentication"}, "deadline_unix_ms": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615}}
+    },
+    "secretDelivery": {
+      "type": "object", "additionalProperties": false, "required": ["auth_method_id", "invocation_id", "kind", "credential_class", "value", "expires_at_unix_ms"],
+      "properties": {"auth_method_id": {"$ref": "#/$defs/identifier"}, "invocation_id": {"$ref": "#/$defs/id"}, "kind": {"enum": ["api_key", "access_token"]}, "credential_class": {"$ref": "#/$defs/identifier"}, "value": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"}, "expires_at_unix_ms": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615}}
+    },
+    "invokeParams": {
+      "type": "object", "additionalProperties": false, "required": ["invocation", "input"],
+      "properties": {"invocation": {"$ref": "#/$defs/invocation"}, "input": {"type": "object"}, "secret_delivery": {"$ref": "#/$defs/secretDelivery"}},
+      "allOf": [
+        {"if": {"properties": {"invocation": {"properties": {"authentication": {"properties": {"kind": {"const": "host_secret"}}, "required": ["kind"]}}, "required": ["authentication"]}}, "required": ["invocation"]}, "then": {"required": ["secret_delivery"]}, "else": {"not": {"required": ["secret_delivery"]}}}
+      ]
+    },
+    "invoke": {
+      "type": "object", "additionalProperties": false, "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {"jsonrpc": {"const": "2.0"}, "id": {"$ref": "#/$defs/id"}, "method": {"const": "tool.invoke"}, "params": {"$ref": "#/$defs/invokeParams"}}
+    },
+    "connectionDiagnostic": {
+      "type": "object", "additionalProperties": false, "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {"jsonrpc": {"const": "2.0"}, "id": {"$ref": "#/$defs/id"}, "method": {"const": "connection_diagnostic"}, "params": {"type": "object", "additionalProperties": false, "required": ["provider_id", "policy_id"], "properties": {"provider_id": {"$ref": "#/$defs/identifier"}, "policy_id": {"$ref": "#/$defs/policyId"}}}}
+    }
+  }
+}

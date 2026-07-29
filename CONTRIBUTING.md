@@ -16,10 +16,18 @@ Run these commands from the repository root:
 
 ```text
 cargo fmt --all -- --check
-cargo check --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo check --workspace --all-targets --locked
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+python3 tests/contract/test_contract.py
+cargo audit --deny warnings
 ```
+
+Rust 1.88 is the workspace MSRV. The Ubuntu Rust 1.88.0 CI job is the
+explicit MSRV gate; the pinned Rust 1.97.1 CI job runs the same locked checks
+on Ubuntu, macOS, and Windows. All checks must pass, including a clean
+`cargo audit --deny warnings`, before merge. Do not release or merge from an
+intermediate commit with a red audit.
 
 Do not add generated build output or secrets. Keep dependencies minimal and
 justify new dependencies in the pull request.

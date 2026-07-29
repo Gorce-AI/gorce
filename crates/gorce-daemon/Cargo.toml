@@ -8,7 +8,19 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+axum = "0.7.5"
+async-stream = "0.3.5"
+futures-core = "0.3.30"
 gorce-agent = { path = "../gorce-agent" }
+gorce-platform-security = { path = "../gorce-platform-security" }
+gorce-protocol = { path = "../gorce-protocol" }
+gorce-store = { path = "../gorce-store" }
+gorce-store-writer = { path = "../gorce-store-writer" }
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.114"
+tokio = { version = "1.36.0", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tower = { version = "0.4.13", features = ["util"] }
+uuid = { version = "1.7.0", features = ["v4", "v7"] }
 
 [lints]
 workspace = true

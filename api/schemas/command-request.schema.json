@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/command-request.schema.json",
+  "title": "AuthorityCommandRequest",
+  "description": "Closed Phase 1 authority command envelope. Bearer identity, actor, profile, policy, grant, pinned spec, admission ID, timestamp, and storage metadata are daemon-owned.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "command"],
+      "properties": {
+        "version": { "const": "gorce.command/v1" },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "arguments"],
+          "properties": {
+            "kind": { "const": "authority.profile_register" },
+            "arguments": {
+              "type": "object",
+              "additionalProperties": false,
+              "maxProperties": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "command"],
+      "properties": {
+        "version": { "const": "gorce.command/v1" },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "arguments"],
+          "properties": {
+            "kind": { "const": "authority.operator_bind" },
+            "arguments": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["operator_id"],
+              "properties": {
+                "operator_id": { "type": "string", "format": "uuid" }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "command"],
+      "properties": {
+        "version": { "const": "gorce.command/v1" },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "arguments"],
+          "properties": {
+            "kind": { "const": "authority.admission_create" },
+            "arguments": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["operator_id", "run_id"],
+              "properties": {
+                "operator_id": { "type": "string", "format": "uuid" },
+                "run_id": { "type": "string", "format": "uuid" }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "version": "gorce.command/v1",
+      "command": {
+        "kind": "authority.profile_register",
+        "arguments": {}
+      }
+    },
+    {
+      "version": "gorce.command/v1",
+      "command": {
+        "kind": "authority.operator_bind",
+        "arguments": {
+          "operator_id": "018f0f5e-7b12-7abc-8def-0123456789ab"
+        }
+      }
+    },
+    {
+      "version": "gorce.command/v1",
+      "command": {
+        "kind": "authority.admission_create",
+        "arguments": {
+          "operator_id": "018f0f5e-7b12-7abc-8def-0123456789ab",
+          "run_id": "018f0f5e-7b12-7abd-8def-0123456789ab"
+        }
+      }
+    }
+  ]
+}

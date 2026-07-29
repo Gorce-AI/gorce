@@ -11,6 +11,8 @@ rust-version.workspace = true
 gorce-daemon = { path = "../gorce-daemon" }
 gorce-sdk = { path = "../gorce-sdk" }
 gorce-tui = { path = "../gorce-tui" }
+serde_json = "1.0.114"
+tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread", "time"] }
 
 [lints]
 workspace = true

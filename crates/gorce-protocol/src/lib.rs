@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 pub const PROTOCOL_VERSION: &str = "0.1";
@@ -23,6 +24,10 @@ pub const MAX_FILENAME_BYTES: usize = 255;
 pub const MAX_TIMESTAMP_BYTES: usize = 64;
 pub const MAX_PUBLIC_EVENT_COUNT: usize = 500;
 pub const MAX_PUBLIC_EVENT_PAYLOAD_BYTES: usize = 1_048_576;
+pub const COMMAND_ENVELOPE_FORMAT: &str = "gorce.command/v1";
+pub const IDEMPOTENCY_KEY_HEADER: &str = "Idempotency-Key";
+pub const LAST_EVENT_ID_HEADER: &str = "Last-Event-ID";
+pub const PUBLIC_EVENT_CURSOR_FORMAT: &str = "g1-<batch-sequence>-<event-ordinal>";
 
 pub type ProjectId = Uuid;
 pub type WorkstreamId = Uuid;
@@ -44,6 +49,21 @@ pub type GoalId = Uuid;
 pub type PlanId = Uuid;
 pub type PlanItemId = Uuid;
 pub type EventBatchId = UuidV7;
+pub type PrincipalId = Uuid;
+pub type PolicyId = Uuid;
+pub type ProfileRevisionId = Uuid;
+pub type OperatorBindingId = Uuid;
+pub type AdmissionId = Uuid;
+pub type RunId = Uuid;
+
+pub const AUTHORITY_EVENT_SCHEMA_VERSION: u64 = 1;
+pub const AUTHORITY_BOOTSTRAP_EVENT: &str = "authority.bootstrap";
+pub const AUTHORITY_COMMAND_RECORDED_EVENT: &str = "authority.command_recorded";
+pub const AUTHORITY_PRINCIPAL_CREATED_EVENT: &str = "authority.principal_created";
+pub const AUTHORITY_POLICY_CREATED_EVENT: &str = "authority.policy_created";
+pub const AUTHORITY_PROFILE_REGISTERED_EVENT: &str = "authority.profile_registered";
+pub const AUTHORITY_OPERATOR_BOUND_EVENT: &str = "authority.operator_bound";
+pub const AUTHORITY_ADMISSION_CREATED_EVENT: &str = "authority.admission_created";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UuidV7(Uuid);
@@ -62,6 +82,38 @@ impl UuidV7 {
         self.0
     }
 }
+
+/// The required HTTP idempotency header. This value is transport metadata and
+/// is intentionally not part of `CommandRequest`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct IdempotencyKey(pub String);
+
+impl IdempotencyKey {
+    pub fn validate(&self) -> Result<(), IdempotencyKeyValidationError> {
+        if !is_valid_idempotency_key(&self.0) {
+            return Err(IdempotencyKeyValidationError(
+                "Idempotency-Key must contain 1..=256 bytes".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdempotencyKeyValidationError(String);
+
+impl std::fmt::Display for IdempotencyKeyValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for IdempotencyKeyValidationError {}
 
 impl Serialize for UuidV7 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -157,6 +209,7 @@ pub struct EventActor {
     pub operator_id: Option<OperatorId>,
 }
 
+/// Daemon-only command metadata embedded in a canonical persisted batch.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventCommand {
@@ -195,6 +248,13 @@ impl EventCommand {
         payload.insert("name", Value::String(self.name.clone()));
         serde_json::to_vec(&payload)
     }
+
+    pub fn command_digest(&self) -> Result<String, serde_json::Error> {
+        Ok(format!(
+            "sha256:{:x}",
+            Sha256::digest(self.canonical_payload_digest_input()?)
+        ))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,6 +268,780 @@ impl std::fmt::Display for EventCommandValidationError {
 
 impl std::error::Error for EventCommandValidationError {}
 
+/// External command envelope. `Idempotency-Key` is supplied by the HTTP layer,
+/// never serialized here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LegacyCommandRequest {
+    pub version: String,
+    pub command: CommandKind,
+}
+
+impl LegacyCommandRequest {
+    pub fn validate(&self) -> Result<(), CommandRequestValidationError> {
+        if self.version != COMMAND_ENVELOPE_FORMAT {
+            return Err(CommandRequestValidationError(format!(
+                "version must be {COMMAND_ENVELOPE_FORMAT}"
+            )));
+        }
+        let command_bytes = serde_json::to_vec(&self.command).map_err(|error| {
+            CommandRequestValidationError(format!("command cannot be serialized: {error}"))
+        })?;
+        if command_bytes.len() > MAX_COMMAND_ARGUMENT_BYTES {
+            return Err(CommandRequestValidationError(format!(
+                "command exceeds {MAX_COMMAND_ARGUMENT_BYTES} serialized bytes"
+            )));
+        }
+        self.command.validate()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CommandKind {
+    #[serde(rename = "task.create")]
+    TaskCreate { arguments: TaskCreateArguments },
+    #[serde(rename = "task.update")]
+    TaskUpdate { arguments: TaskUpdateArguments },
+    #[serde(rename = "task.lifecycle_change")]
+    TaskLifecycleChange {
+        arguments: TaskLifecycleChangeArguments,
+    },
+    #[serde(rename = "task.edge.create")]
+    TaskEdgeCreate { arguments: TaskEdgeCreateArguments },
+    #[serde(rename = "workstream.create")]
+    WorkstreamCreate {
+        arguments: WorkstreamCreateArguments,
+    },
+    #[serde(rename = "workstream.archive")]
+    WorkstreamArchive {
+        arguments: WorkstreamArchiveArguments,
+    },
+}
+
+impl CommandKind {
+    fn validate(&self) -> Result<(), CommandRequestValidationError> {
+        match self {
+            Self::TaskCreate { arguments } => arguments.validate(),
+            Self::TaskUpdate { arguments } => arguments.validate(),
+            Self::TaskLifecycleChange { arguments } => arguments.validate(),
+            Self::TaskEdgeCreate { arguments } => arguments.validate(),
+            Self::WorkstreamCreate { arguments } => arguments.validate(),
+            Self::WorkstreamArchive { arguments } => arguments.validate(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCreateArguments {
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workstream_id: Option<WorkstreamId>,
+}
+
+impl TaskCreateArguments {
+    fn validate(&self) -> Result<(), CommandRequestValidationError> {
+        validate_command_text("title", &self.title, 1, 4_096)?;
+        validate_optional_command_text("description", self.description.as_deref(), 16_384)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskUpdateArguments {
+    pub task_id: TaskId,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl TaskUpdateArguments {
+    fn validate(&self) -> Result<(), CommandRequestValidationError> {
+        validate_command_text("title", &self.title, 1, 4_096)?;
+        validate_optional_command_text("description", self.description.as_deref(), 16_384)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskLifecycleChangeArguments {
+    pub task_id: TaskId,
+    pub lifecycle: TaskLifecycle,
+}
+
+impl TaskLifecycleChangeArguments {
+    fn validate(&self) -> Result<(), CommandRequestValidationError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskEdgeCreateArguments {
+    pub from_task_id: TaskId,
+    pub to_task_id: TaskId,
+    pub kind: TaskEdgeKind,
+}
+
+impl TaskEdgeCreateArguments {
+    fn validate(&self) -> Result<(), CommandRequestValidationError> {
+        if self.from_task_id == self.to_task_id {
+            return Err(CommandRequestValidationError(
+                "from_task_id and to_task_id must differ".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkstreamCreateArguments {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl WorkstreamCreateArguments {
+    fn validate(&self) -> Result<(), CommandRequestValidationError> {
+        validate_command_text("name", &self.name, 1, 4_096)?;
+        validate_optional_command_text("description", self.description.as_deref(), 16_384)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkstreamArchiveArguments {
+    pub workstream_id: WorkstreamId,
+}
+
+impl WorkstreamArchiveArguments {
+    fn validate(&self) -> Result<(), CommandRequestValidationError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandRequestValidationError(String);
+
+impl std::fmt::Display for CommandRequestValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for CommandRequestValidationError {}
+
+fn validate_command_text(
+    field: &str,
+    value: &str,
+    minimum: usize,
+    maximum: usize,
+) -> Result<(), CommandRequestValidationError> {
+    if value.len() < minimum || value.len() > maximum || value.chars().any(char::is_control) {
+        return Err(CommandRequestValidationError(format!(
+            "{field} must contain {minimum}..={maximum} bytes and no control characters"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_optional_command_text(
+    field: &str,
+    value: Option<&str>,
+    maximum: usize,
+) -> Result<(), CommandRequestValidationError> {
+    if let Some(value) = value {
+        validate_command_text(field, value, 1, maximum)?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceKind {
+    Principal,
+    Policy,
+    ProfileRevision,
+    OperatorBinding,
+    Admission,
+    Project,
+    Workstream,
+    Goal,
+    Plan,
+    Task,
+    TaskRevision,
+    TaskEdge,
+    TaskAttempt,
+    Lease,
+    PermissionRequest,
+    ContextBundle,
+    EvidenceBundle,
+    Attachment,
+    Message,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceReference {
+    pub kind: ResourceKind,
+    pub id: Uuid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandResultKind {
+    Accepted,
+    Created,
+    Updated,
+    LifecycleChanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandResult {
+    pub kind: CommandResultKind,
+    pub resource_refs: Vec<ResourceReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceReference {
+    pub kind: EvidenceKind,
+    pub id: EvidenceBundleId,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandCommit {
+    pub project_id: ProjectId,
+    pub batch_id: EventBatchId,
+    pub batch_sequence: u64,
+    pub public_cursors: Vec<PublicEventCursor>,
+    pub result: CommandResult,
+    pub evidence_refs: Vec<EvidenceReference>,
+}
+
+pub type CommandResponse = CommandCommit;
+pub type CommandCommitResponse = CommandCommit;
+
+impl CommandCommit {
+    pub fn validate(&self) -> Result<(), CommandCommitValidationError> {
+        if self.batch_sequence == 0 {
+            return Err(CommandCommitValidationError(
+                "batch_sequence must be at least 1".to_owned(),
+            ));
+        }
+        for cursor in &self.public_cursors {
+            cursor.validate().map_err(|error| {
+                CommandCommitValidationError(format!("public_cursors: {error}"))
+            })?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandCommitValidationError(String);
+
+impl std::fmt::Display for CommandCommitValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for CommandCommitValidationError {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandErrorCode {
+    InvalidCommand,
+    InvalidArguments,
+    MissingIdempotencyKey,
+    IdempotencyConflict,
+    CommandNotSupported,
+    CommandRejected,
+    CommitUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandError {
+    pub code: CommandErrorCode,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthorityPrincipalKind {
+    LocalControl,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthorityPolicyEffect {
+    Allow,
+    Deny,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityPolicyRule {
+    pub action: String,
+    pub resource: String,
+    pub effect: AuthorityPolicyEffect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityBudget {
+    pub model_tokens: u64,
+    pub tool_calls: u32,
+    pub wall_time_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityResourceScope {
+    pub action: String,
+    pub resource: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthorityExecutionDisposition {
+    Disabled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityGrant {
+    pub actions: Vec<String>,
+    pub scopes: Vec<AuthorityResourceScope>,
+    pub max_depth: u32,
+    pub max_concurrency: u32,
+    pub budget: AuthorityBudget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PinnedSkillReference {
+    pub name: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PinnedProfileSpec {
+    pub execution_disposition: AuthorityExecutionDisposition,
+    pub model_component: String,
+    pub tool_component: String,
+    pub skills: Vec<PinnedSkillReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityPrincipal {
+    pub id: PrincipalId,
+    pub project_id: ProjectId,
+    pub kind: AuthorityPrincipalKind,
+    pub subject: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityPolicy {
+    pub id: PolicyId,
+    pub project_id: ProjectId,
+    pub revision: u64,
+    pub rules: Vec<AuthorityPolicyRule>,
+    pub digest: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityProfileRevision {
+    pub id: ProfileRevisionId,
+    pub project_id: ProjectId,
+    pub revision: u64,
+    pub name: String,
+    pub policy_id: PolicyId,
+    pub spec: PinnedProfileSpec,
+    pub grant: AuthorityGrant,
+    pub digest: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorBinding {
+    pub id: OperatorBindingId,
+    pub project_id: ProjectId,
+    pub principal_id: PrincipalId,
+    pub operator_id: OperatorId,
+    pub profile_revision_id: ProfileRevisionId,
+    pub policy_id: PolicyId,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Admission {
+    pub id: AdmissionId,
+    pub project_id: ProjectId,
+    pub principal_id: PrincipalId,
+    pub operator_id: OperatorId,
+    pub run_id: RunId,
+    pub binding_id: OperatorBindingId,
+    pub profile_revision_id: ProfileRevisionId,
+    pub policy_id: PolicyId,
+    pub grant: AuthorityGrant,
+    pub spec_digest: String,
+    pub execution_disposition: AuthorityExecutionDisposition,
+    pub actor: EventActor,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityCommandReceipt {
+    pub principal_id: PrincipalId,
+    pub idempotency_key: String,
+    pub command_digest: String,
+    pub result: CommandCommit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityBootstrap {
+    pub principal_id: PrincipalId,
+    pub policy_id: PolicyId,
+    pub profile_revision_id: ProfileRevisionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmptyCommandArguments {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorBindingArguments {
+    pub operator_id: OperatorId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionCreateArguments {
+    pub operator_id: OperatorId,
+    pub run_id: RunId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum AuthorityCommandKind {
+    #[serde(rename = "authority.profile_register")]
+    ProfileRegister { arguments: EmptyCommandArguments },
+    #[serde(rename = "authority.operator_bind")]
+    OperatorBind { arguments: OperatorBindingArguments },
+    #[serde(rename = "authority.admission_create")]
+    AdmissionCreate { arguments: AdmissionCreateArguments },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityCommandRequest {
+    pub version: String,
+    pub command: AuthorityCommandKind,
+}
+
+pub type ProjectCommandRequest = AuthorityCommandRequest;
+pub type CommandRequest = AuthorityCommandRequest;
+
+impl AuthorityCommandRequest {
+    pub fn validate(&self) -> Result<(), AuthorityValidationError> {
+        if self.version != COMMAND_ENVELOPE_FORMAT {
+            return Err(AuthorityValidationError(format!(
+                "version must be {COMMAND_ENVELOPE_FORMAT}"
+            )));
+        }
+        self.command.validate()
+    }
+
+    pub fn canonical_payload_digest_input(&self) -> Result<Vec<u8>, AuthorityValidationError> {
+        let mut envelope = BTreeMap::new();
+        envelope.insert("command", serde_json::to_value(&self.command)?);
+        envelope.insert("version", Value::String(self.version.clone()));
+        Ok(serde_json::to_vec(&envelope)?)
+    }
+
+    pub fn command_digest(&self) -> Result<String, AuthorityValidationError> {
+        Ok(format!(
+            "sha256:{:x}",
+            Sha256::digest(self.canonical_payload_digest_input()?)
+        ))
+    }
+}
+
+impl AuthorityCommandKind {
+    fn validate(&self) -> Result<(), AuthorityValidationError> {
+        match self {
+            Self::ProfileRegister { arguments } => {
+                let _ = arguments;
+            }
+            Self::OperatorBind { arguments } => {
+                if arguments.operator_id.is_nil() {
+                    return Err(AuthorityValidationError(
+                        "operator_id must not be nil".to_owned(),
+                    ));
+                }
+            }
+            Self::AdmissionCreate { arguments } => {
+                if arguments.operator_id.is_nil() || arguments.run_id.is_nil() {
+                    return Err(AuthorityValidationError(
+                        "operator_id and run_id must not be nil".to_owned(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorityValidationError(String);
+
+impl std::fmt::Display for AuthorityValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for AuthorityValidationError {}
+
+impl From<serde_json::Error> for AuthorityValidationError {
+    fn from(error: serde_json::Error) -> Self {
+        Self(error.to_string())
+    }
+}
+
+impl AuthorityPrincipal {
+    pub fn validate(&self) -> Result<(), AuthorityValidationError> {
+        if self.id.is_nil()
+            || self.project_id.is_nil()
+            || self.subject.trim().is_empty()
+            || !is_valid_timestamp(&self.created_at)
+        {
+            return Err(AuthorityValidationError(
+                "principal identity and timestamp are invalid".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl AuthorityPolicy {
+    pub fn content_digest(&self) -> Result<String, AuthorityValidationError> {
+        authority_digest(&(&self.project_id, &self.revision, &self.rules))
+    }
+
+    pub fn validate(&self) -> Result<(), AuthorityValidationError> {
+        if self.id.is_nil()
+            || self.project_id.is_nil()
+            || self.revision == 0
+            || self
+                .rules
+                .iter()
+                .any(|rule| rule.action.trim().is_empty() || rule.resource.trim().is_empty())
+            || !is_valid_timestamp(&self.created_at)
+        {
+            return Err(AuthorityValidationError("policy is invalid".to_owned()));
+        }
+        let digest = self.content_digest()?;
+        if digest != self.digest {
+            return Err(AuthorityValidationError(
+                "policy digest does not match its immutable content".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl PinnedProfileSpec {
+    pub fn validate(&self) -> Result<(), AuthorityValidationError> {
+        if self.model_component.trim().is_empty()
+            || self.tool_component.trim().is_empty()
+            || self.skills.iter().any(|skill| {
+                skill.name.trim().is_empty()
+                    || skill.version.trim().is_empty()
+                    || skill.version == "latest"
+            })
+        {
+            return Err(AuthorityValidationError(
+                "profile spec is not pinned".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn is_disabled(&self) -> bool {
+        matches!(
+            self.execution_disposition,
+            AuthorityExecutionDisposition::Disabled
+        )
+    }
+
+    pub fn digest(&self) -> Result<String, AuthorityValidationError> {
+        self.validate()?;
+        authority_digest(self)
+    }
+}
+
+impl AuthorityGrant {
+    pub fn validate(&self) -> Result<(), AuthorityValidationError> {
+        if self.max_depth == u32::MAX
+            || self.max_concurrency == u32::MAX
+            || self.budget.model_tokens == u64::MAX
+            || self.budget.tool_calls == u32::MAX
+            || self.budget.wall_time_ms == u64::MAX
+            || self.actions.iter().any(|action| action.trim().is_empty())
+            || self
+                .scopes
+                .iter()
+                .any(|scope| scope.action.trim().is_empty() || scope.resource.trim().is_empty())
+        {
+            return Err(AuthorityValidationError(
+                "authority grant is invalid".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl AuthorityProfileRevision {
+    pub fn content_digest(&self) -> Result<String, AuthorityValidationError> {
+        authority_digest(&(
+            &self.project_id,
+            &self.revision,
+            &self.name,
+            &self.policy_id,
+            &self.spec,
+            &self.grant,
+        ))
+    }
+
+    pub fn validate(&self) -> Result<(), AuthorityValidationError> {
+        if self.id.is_nil()
+            || self.project_id.is_nil()
+            || self.revision == 0
+            || self.name.trim().is_empty()
+            || self.policy_id.is_nil()
+            || !is_valid_timestamp(&self.created_at)
+        {
+            return Err(AuthorityValidationError(
+                "profile revision is invalid".to_owned(),
+            ));
+        }
+        self.spec.validate()?;
+        if !self.spec.is_disabled()
+            || !self.grant.actions.is_empty()
+            || !self.grant.scopes.is_empty()
+            || self.grant.max_depth != 0
+            || self.grant.max_concurrency != 0
+            || self.grant.budget.model_tokens != 0
+            || self.grant.budget.tool_calls != 0
+            || self.grant.budget.wall_time_ms != 0
+        {
+            return Err(AuthorityValidationError(
+                "phase-one authority profiles must be disabled with zero grant limits".to_owned(),
+            ));
+        }
+        self.grant.validate()?;
+        let digest = self.content_digest()?;
+        if digest != self.digest {
+            return Err(AuthorityValidationError(
+                "profile digest does not match its immutable content".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl OperatorBinding {
+    pub fn validate(&self) -> Result<(), AuthorityValidationError> {
+        if self.id.is_nil()
+            || self.project_id.is_nil()
+            || self.principal_id.is_nil()
+            || self.operator_id.is_nil()
+            || self.profile_revision_id.is_nil()
+            || self.policy_id.is_nil()
+            || !is_valid_timestamp(&self.created_at)
+        {
+            return Err(AuthorityValidationError(
+                "operator binding is invalid".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Admission {
+    pub fn validate(&self) -> Result<(), AuthorityValidationError> {
+        if self.id.is_nil()
+            || self.project_id.is_nil()
+            || self.principal_id.is_nil()
+            || self.operator_id.is_nil()
+            || self.run_id.is_nil()
+            || self.binding_id.is_nil()
+            || self.profile_revision_id.is_nil()
+            || self.policy_id.is_nil()
+            || self.spec_digest.trim().is_empty()
+            || !is_valid_timestamp(&self.created_at)
+        {
+            return Err(AuthorityValidationError("admission is invalid".to_owned()));
+        }
+        self.grant.validate()?;
+        if !matches!(
+            self.execution_disposition,
+            AuthorityExecutionDisposition::Disabled
+        ) || !self.grant.actions.is_empty()
+            || !self.grant.scopes.is_empty()
+            || self.grant.max_depth != 0
+            || self.grant.max_concurrency != 0
+            || self.grant.budget.model_tokens != 0
+            || self.grant.budget.tool_calls != 0
+            || self.grant.budget.wall_time_ms != 0
+        {
+            return Err(AuthorityValidationError(
+                "phase-one admissions must be disabled with zero grant limits".to_owned(),
+            ));
+        }
+        if self.actor.kind != EventActorKind::Service
+            || self.actor.operator_id != Some(self.operator_id)
+        {
+            return Err(AuthorityValidationError(
+                "admission actor must be the bound service operator".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn authority_digest<T: Serialize>(value: &T) -> Result<String, AuthorityValidationError> {
+    Ok(format!(
+        "sha256:{:x}",
+        Sha256::digest(serde_json::to_vec(value)?)
+    ))
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventRecord {
@@ -218,6 +1052,8 @@ pub struct EventRecord {
     pub data: Value,
 }
 
+/// Daemon-only canonical persisted contract. External clients submit
+/// `CommandRequest` and never construct or mutate this record through HTTP.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventBatch {
@@ -750,6 +1586,32 @@ pub struct Message {
 #[serde(transparent)]
 pub struct PublicEventCursor(pub String);
 
+impl PublicEventCursor {
+    pub fn validate(&self) -> Result<(), PublicEventCursorValidationError> {
+        if !is_valid_cursor(&self.0) {
+            return Err(PublicEventCursorValidationError(format!(
+                "cursor must use the opaque {PUBLIC_EVENT_CURSOR_FORMAT} v0 representation"
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicEventCursorValidationError(String);
+
+impl std::fmt::Display for PublicEventCursorValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for PublicEventCursorValidationError {}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublicEvent {
@@ -809,11 +1671,9 @@ impl PublicEvent {
 
 impl PublicEventBatch {
     pub fn validate(&self) -> Result<(), PublicEventValidationError> {
-        if !is_valid_cursor(&self.cursor.0) {
-            return Err(PublicEventValidationError(
-                "cursor must contain 1..=512 bytes".to_owned(),
-            ));
-        }
+        self.cursor
+            .validate()
+            .map_err(|error| PublicEventValidationError(error.to_string()))?;
         if self.events.len() > MAX_PUBLIC_EVENT_COUNT {
             return Err(PublicEventValidationError(format!(
                 "events must contain at most {MAX_PUBLIC_EVENT_COUNT} events"
@@ -828,11 +1688,9 @@ impl PublicEventBatch {
             ));
         }
         if let Some(next_cursor) = &self.next_cursor {
-            if !is_valid_cursor(&next_cursor.0) {
-                return Err(PublicEventValidationError(
-                    "next_cursor must contain 1..=512 bytes".to_owned(),
-                ));
-            }
+            next_cursor
+                .validate()
+                .map_err(|error| PublicEventValidationError(error.to_string()))?;
         }
         Ok(())
     }
@@ -906,11 +1764,28 @@ fn is_valid_idempotency_key(value: &str) -> bool {
 }
 
 fn is_valid_cursor(value: &str) -> bool {
+    if value.is_empty() || value.len() > 512 {
+        return false;
+    }
+    let mut parts = value.split('-');
+    if parts.next() != Some("g1") {
+        return false;
+    }
+    let Some(batch_sequence) = parts.next() else {
+        return false;
+    };
+    let Some(event_ordinal) = parts.next() else {
+        return false;
+    };
+    parts.next().is_none()
+        && is_cursor_component(batch_sequence)
+        && is_cursor_component(event_ordinal)
+}
+
+fn is_cursor_component(value: &str) -> bool {
     !value.is_empty()
-        && value.len() <= 512
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._~-".contains(&byte))
+        && (value == "0" || !value.starts_with('0'))
+        && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn is_valid_timestamp(value: &str) -> bool {
@@ -941,7 +1816,9 @@ fn is_valid_timestamp(value: &str) -> bool {
     let days_in_month = match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
-        2 if year % 400 == 0 || (year % 4 == 0 && year % 100 != 0) => 29,
+        2 if year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100)) => {
+            29
+        }
         2 => 28,
         _ => 0,
     };
@@ -994,9 +1871,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        protocol_version, BlobRef, EventActor, EventActorKind, EventBatch, EventCommand,
-        EventRecord, PublicEventBatch, PublicEventCursor, UuidV7, EVENT_BATCH_FORMAT,
-        PROTOCOL_VERSION,
+        protocol_version, BlobRef, CommandKind, EventActor, EventActorKind, EventBatch,
+        EventCommand, EventRecord, LegacyCommandRequest, PublicEventBatch, PublicEventCursor,
+        UuidV7, COMMAND_ENVELOPE_FORMAT, EVENT_BATCH_FORMAT, PROTOCOL_VERSION,
     };
     use uuid::Uuid;
 
@@ -1152,7 +2029,7 @@ mod tests {
     #[test]
     fn public_event_batch_is_distinct_from_canonical_batch() {
         let page = PublicEventBatch {
-            cursor: PublicEventCursor("cursor-1".to_owned()),
+            cursor: PublicEventCursor("g1-1-0".to_owned()),
             events: Vec::new(),
             next_cursor: None,
             has_more: false,
@@ -1165,6 +2042,74 @@ mod tests {
             page
         );
         page.validate().unwrap();
+    }
+
+    #[test]
+    fn external_command_request_is_typed_and_has_no_storage_metadata() {
+        let request = LegacyCommandRequest {
+            version: COMMAND_ENVELOPE_FORMAT.to_owned(),
+            command: CommandKind::TaskCreate {
+                arguments: super::TaskCreateArguments {
+                    title: "Create a task".to_owned(),
+                    description: None,
+                    workstream_id: None,
+                },
+            },
+        };
+        request.validate().unwrap();
+        let encoded = serde_json::to_value(&request).unwrap();
+        assert_eq!(encoded["version"], COMMAND_ENVELOPE_FORMAT);
+        assert_eq!(encoded["command"]["kind"], "task.create");
+        assert!(encoded["command"]["arguments"]["actor"].is_null());
+        assert!(encoded["idempotency_key"].is_null());
+        assert!(encoded["batch_id"].is_null());
+        assert!(encoded["project_id"].is_null());
+        let mut forged = encoded.clone();
+        forged["command"]["actor"] = serde_json::json!({"kind": "system"});
+        assert!(serde_json::from_value::<LegacyCommandRequest>(forged).is_err());
+        assert!(
+            serde_json::from_value::<LegacyCommandRequest>(serde_json::json!({
+                "version": COMMAND_ENVELOPE_FORMAT,
+                "command": {
+                    "kind": "unknown.command",
+                    "arguments": {}
+                }
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn public_cursor_is_opaque_but_has_the_v0_wire_shape() {
+        PublicEventCursor("g1-7-0".to_owned()).validate().unwrap();
+        assert!(PublicEventCursor("eyJzZXF1ZW5jZSI6MX0".to_owned())
+            .validate()
+            .is_err());
+        assert!(PublicEventCursor("g1-7".to_owned()).validate().is_err());
+    }
+
+    #[test]
+    fn authority_commands_are_closed_and_admission_has_only_identity_arguments() {
+        let request = super::AuthorityCommandRequest {
+            version: COMMAND_ENVELOPE_FORMAT.to_owned(),
+            command: super::AuthorityCommandKind::AdmissionCreate {
+                arguments: super::AdmissionCreateArguments {
+                    operator_id: Uuid::new_v4(),
+                    run_id: Uuid::new_v4(),
+                },
+            },
+        };
+        request.validate().unwrap();
+        assert_eq!(
+            request.command_digest().unwrap(),
+            request.command_digest().unwrap()
+        );
+        let mut forged = serde_json::to_value(&request).unwrap();
+        forged["command"]["arguments"]["profile_id"] = serde_json::json!("forged");
+        assert!(serde_json::from_value::<super::AuthorityCommandRequest>(forged).is_err());
+        let mut unknown = serde_json::to_value(&request).unwrap();
+        unknown["command"]["kind"] = serde_json::json!("authority.bootstrap");
+        assert!(serde_json::from_value::<super::AuthorityCommandRequest>(unknown).is_err());
     }
 
     #[test]

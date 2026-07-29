@@ -1,0 +1,84 @@
+{
+  "positive": [
+    {
+      "kind": "manifest",
+      "value": {
+        "format": "gorce.provider/v1",
+        "provider_id": "fixture-provider",
+        "display_name": "Provider ABI fixture",
+        "version": "1.0.0",
+        "publisher": {"name": "Fixture publisher", "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "package": {"files": [{"path": "bin/provider", "size": 1, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}], "executable": {"path": "bin/provider", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+        "auth_methods": [{"kind": "api_key", "id": "fixture_api_key", "credential_class": "fixture-key", "label": "Fixture API key"}],
+        "capabilities": {"auth_method_ids": ["fixture_api_key"], "credential_classes": ["fixture-key"], "network_origins": []},
+        "tools": [{"name": "fixture_tool", "description": "Fixture tool", "input_schema": {"type": "object", "properties": {"query": {"type": "string", "minLength": 1}}, "required": ["query"], "additionalProperties": false}, "output_schema": {"type": "object", "additionalProperties": false}, "side_effects": ["network_read"], "auth_method_id": "fixture_api_key", "credential_class": "fixture-key", "network_origins": []}]
+      }
+    },
+    {"kind": "response", "value": {"jsonrpc": "2.0", "id": "fixture-ok", "result": {"ok": true}}},
+    {"kind": "response", "value": {"jsonrpc": "2.0", "id": "fixture-error", "error": {"code": -32602, "message": "invalid params"}}}
+  ],
+  "negative": [
+    {
+      "kind": "manifest",
+      "reason": "unsafe path",
+      "value": {
+        "format": "gorce.provider/v1", "provider_id": "fixture-provider", "display_name": "Provider ABI fixture", "version": "1.0.0",
+        "publisher": {"name": "Fixture publisher", "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "package": {"files": [{"path": "../provider", "size": 1, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}], "executable": {"path": "../provider", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+        "auth_methods": [{"kind": "api_key", "id": "fixture_api_key", "credential_class": "fixture-key", "label": "Fixture API key"}],
+        "capabilities": {"auth_method_ids": ["fixture_api_key"], "credential_classes": ["fixture-key"], "network_origins": []},
+        "tools": [{"name": "fixture_tool", "description": "Fixture tool", "input_schema": {"type": "object", "additionalProperties": false}, "output_schema": {"type": "object", "additionalProperties": false}, "side_effects": ["network_read"], "auth_method_id": "fixture_api_key", "credential_class": "fixture-key", "network_origins": []}]
+      }
+    },
+    {
+      "kind": "manifest",
+      "reason": "duplicate credential class",
+      "value": {
+        "format": "gorce.provider/v1", "provider_id": "fixture-provider", "display_name": "Provider ABI fixture", "version": "1.0.0",
+        "publisher": {"name": "Fixture publisher", "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "package": {"files": [{"path": "bin/provider", "size": 1, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}], "executable": {"path": "bin/provider", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+        "auth_methods": [{"kind": "api_key", "id": "fixture_api_key", "credential_class": "fixture-key", "label": "Fixture API key"}, {"kind": "api_key", "id": "fixture_other_key", "credential_class": "fixture-key", "label": "Fixture other key"}],
+        "capabilities": {"auth_method_ids": ["fixture_api_key", "fixture_other_key"], "credential_classes": ["fixture-key"], "network_origins": []},
+        "tools": [{"name": "fixture_tool", "description": "Fixture tool", "input_schema": {"type": "object", "additionalProperties": false}, "output_schema": {"type": "object", "additionalProperties": false}, "side_effects": ["network_read"], "auth_method_id": "fixture_api_key", "credential_class": "fixture-key", "network_origins": []}]
+      }
+    },
+    {
+      "kind": "manifest",
+      "reason": "unbound tool auth method",
+      "value": {
+        "format": "gorce.provider/v1", "provider_id": "fixture-provider", "display_name": "Provider ABI fixture", "version": "1.0.0",
+        "publisher": {"name": "Fixture publisher", "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "package": {"files": [{"path": "bin/provider", "size": 1, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}], "executable": {"path": "bin/provider", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+        "auth_methods": [{"kind": "api_key", "id": "fixture_api_key", "credential_class": "fixture-key", "label": "Fixture API key"}],
+        "capabilities": {"auth_method_ids": ["fixture_api_key"], "credential_classes": ["fixture-key"], "network_origins": []},
+        "tools": [{"name": "fixture_tool", "description": "Fixture tool", "input_schema": {"type": "object", "additionalProperties": false}, "output_schema": {"type": "object", "additionalProperties": false}, "side_effects": ["network_read"], "auth_method_id": null, "credential_class": "fixture-key", "network_origins": []}]
+      }
+    },
+    {
+      "kind": "manifest",
+      "reason": "duplicate origin",
+      "value": {
+        "format": "gorce.provider/v1", "provider_id": "fixture-provider", "display_name": "Provider ABI fixture", "version": "1.0.0",
+        "publisher": {"name": "Fixture publisher", "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "package": {"files": [{"path": "bin/provider", "size": 1, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}], "executable": {"path": "bin/provider", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+        "auth_methods": [{"kind": "api_key", "id": "fixture_api_key", "credential_class": "fixture-key", "label": "Fixture API key"}],
+        "capabilities": {"auth_method_ids": ["fixture_api_key"], "credential_classes": ["fixture-key"], "network_origins": ["https://example.com", "https://example.com"]},
+        "tools": [{"name": "fixture_tool", "description": "Fixture tool", "input_schema": {"type": "object", "additionalProperties": false}, "output_schema": {"type": "object", "additionalProperties": false}, "side_effects": ["network_read"], "auth_method_id": "fixture_api_key", "credential_class": "fixture-key", "network_origins": []}]
+      }
+    },
+    {
+      "kind": "manifest",
+      "reason": "unsupported local schema keyword",
+      "value": {
+        "format": "gorce.provider/v1", "provider_id": "fixture-provider", "display_name": "Provider ABI fixture", "version": "1.0.0",
+        "publisher": {"name": "Fixture publisher", "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "package": {"files": [{"path": "bin/provider", "size": 1, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}], "executable": {"path": "bin/provider", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+        "auth_methods": [{"kind": "api_key", "id": "fixture_api_key", "credential_class": "fixture-key", "label": "Fixture API key"}],
+        "capabilities": {"auth_method_ids": ["fixture_api_key"], "credential_classes": ["fixture-key"], "network_origins": []},
+        "tools": [{"name": "fixture_tool", "description": "Fixture tool", "input_schema": {"type": "object", "pattern": "not allowed"}, "output_schema": {"type": "object", "additionalProperties": false}, "side_effects": ["network_read"], "auth_method_id": "fixture_api_key", "credential_class": "fixture-key", "network_origins": []}]
+      }
+    },
+    {"kind": "response", "reason": "both result and error", "value": {"jsonrpc": "2.0", "id": "fixture-both", "result": {}, "error": {"code": -1, "message": "bad"}}},
+    {"kind": "response", "reason": "neither result nor error", "value": {"jsonrpc": "2.0", "id": "fixture-neither"}}
+  ]
+}

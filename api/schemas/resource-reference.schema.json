@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/resource-reference.schema.json",
+  "title": "ResourceReference",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "id"],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": ["principal", "policy", "profile_revision", "operator_binding", "admission", "project", "workstream", "goal", "plan", "task", "task_revision", "task_edge", "task_attempt", "lease", "permission_request", "context_bundle", "evidence_bundle", "attachment", "message"]
+    },
+    "id": { "type": "string", "format": "uuid" }
+  }
+}

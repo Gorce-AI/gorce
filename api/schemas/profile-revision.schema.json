@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.dev/schemas/profile-revision.schema.json",
+  "title": "AuthorityProfileRevision",
+  "x-daemon-only": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "revision", "name", "policy_id", "spec", "grant", "digest", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "policy_id": { "type": "string", "format": "uuid" },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution_disposition", "model_component", "tool_component", "skills"],
+      "properties": {
+        "execution_disposition": { "type": "string", "enum": ["disabled"] },
+        "model_component": { "type": "string", "minLength": 1 },
+        "tool_component": { "type": "string", "minLength": 1 },
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "version"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "version": { "type": "string", "minLength": 1, "pattern": "^(?!latest$).+" }
+            }
+          }
+        }
+      }
+    },
+    "grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actions", "scopes", "max_depth", "max_concurrency", "budget"],
+      "properties": {
+        "actions": { "type": "array", "items": { "type": "string" } },
+        "scopes": { "type": "array", "items": { "type": "object" } },
+        "max_depth": { "type": "integer", "minimum": 0 },
+        "max_concurrency": { "type": "integer", "minimum": 0 },
+        "budget": { "type": "object" }
+      }
+    },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
