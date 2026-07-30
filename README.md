@@ -42,6 +42,25 @@ cargo clippy --workspace --all-targets -- -D warnings
 See `CONTRIBUTING.md` and `docs/development.md` for contribution and workflow
 details.
 
+## TypeScript execution tooling
+
+The repository's signed execution gate is intentionally external-input based:
+private manifests, signatures, and keys are never committed. With Bun 1.3.14,
+run the complete tooling gate with an externally supplied manifest directory:
+
+```text
+bun install --frozen-lockfile
+bun run verify:bootstrap -- --execution-manifest=/path/to/execution-manifest.json
+bun run qa:task -- --task=03 --all --evidence=/path/to/evidence
+bun run verify:plan-compliance
+bun run docs:verify
+```
+
+All command output is human-readable by default and supports `--json`. The
+bootstrap verifier validates the detached Ed25519 signature, the approved plan
+binding, the complete blocker graph, command ownership, repository license,
+private-artifact exclusions, and source-module limits.
+
 ## License
 
 Gorce is licensed under the Apache License, Version 2.0. See `LICENSE` and

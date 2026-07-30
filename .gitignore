@@ -1,2 +1,13 @@
 /target/
+/dist/
+/node_modules/
+*.tsbuildinfo
 .DS_Store
+
+# Local execution inputs and credentials never belong in the public repository.
+.omo/
+*.key
+*.pem
+*.sig
+.env
+.env.*
