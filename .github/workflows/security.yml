@@ -19,4 +19,4 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Audit dependencies
-        run: cargo install cargo-audit --locked && cargo audit --deny warnings
+        run: cargo install cargo-audit --version 0.21.1 --locked && cargo audit --deny warnings
