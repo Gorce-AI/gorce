@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.options.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist/test",
+    "declaration": true,
+    "declarationMap": true,
+    "emitDeclarationOnly": true
+  },
+  "references": [{ "path": "./tsconfig.source.json" }],
+  "include": ["tests/**/*.ts"]
+}
