@@ -1,6 +1,6 @@
 # API versioning
 
-The API is versioned independently from the Rust crate versions and storage
+The API is versioned independently from bootstrap scaffold metadata and storage
 format. The initial public API namespace is `/v1` when non-health endpoints are
 introduced. The unversioned `/health` endpoint is a liveness contract and may
 remain stable across API versions.

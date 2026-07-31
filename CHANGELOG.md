@@ -9,5 +9,5 @@ and versions follow Semantic Versioning where applicable.
 
 ### Added
 
-- Initial Rust monorepo scaffold for Gorce v0.1.
+- Initial bootstrap scaffold for the TypeScript/Bun core target.
 - API placeholders, architecture documentation, and repository governance files.

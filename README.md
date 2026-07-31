@@ -1,26 +1,21 @@
 # Gorce
 
-Gorce is a Rust monorepo for a local-first service with a daemon, agent,
-filesystem-backed storage, SDK, and terminal interface. This repository is
-the v0.1 scaffold. Runtime behavior is intentionally not implemented yet.
+Gorce is a local-first service with a TypeScript/Bun core target. This
+repository is the v0.1 bootstrap scaffold; the currently checked-in Rust
+crates are temporary and are not final architecture compliance.
 
 ## Repository layout
 
-- `crates/gorce-protocol` — shared wire and API contracts.
-- `crates/gorce-core` — domain contracts and invariants.
-- `crates/gorce-store` — storage contracts and format boundaries.
-- `crates/gorce-agent` — agent contracts.
-- `crates/gorce-daemon` — daemon process boundary.
-- `crates/gorce-sdk` — client-facing library contracts.
-- `crates/gorce-tui` — terminal interface contracts.
-- `crates/gorce` — command-line application.
+- `architecture/` — canonical technology baseline and Studio host decision rule.
+- `src/` — TypeScript verification and execution tooling.
+- `crates/` — temporary Rust scaffold retained for the existing CI checks job.
 - `api/` — OpenAPI and JSON Schema placeholders.
 - `docs/` — architecture, operations, security, and decision records.
 - `xtask/` — repository maintenance command skeleton.
 
-The dependency direction is from protocol and core foundations toward storage,
-agent, daemon, and client layers. See `docs/architecture.md` for the intended
-boundaries.
+See `docs/architecture.md` for the authoritative TypeScript/Bun target and
+sovereign sibling-repository boundaries. Task 6 does not create the future
+application/package workspace graph.
 
 ## Status
 
@@ -29,8 +24,15 @@ authentication, and operational commands will be added in later milestones.
 
 ## Development
 
-The repository requires the stable Rust toolchain with `rustfmt` and `clippy`.
-Run the complete local gate:
+The foundation gate uses Bun 1.3.14, TypeScript 6.0.3, and Biome 2.2.4:
+
+```text
+bun install --frozen-lockfile
+bun run verify:technology -- --bun=1.3.14 --typescript=6.0.3 --strict
+bun run verify:architecture -- --strict
+```
+
+The Rust commands validate only the temporary scaffold:
 
 ```text
 cargo fmt --all -- --check

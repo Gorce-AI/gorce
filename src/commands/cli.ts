@@ -5,6 +5,15 @@ export interface CliOptions {
   readonly switches: ReadonlySet<string>
 }
 
+export interface StrictCliSpec {
+  readonly flags: readonly string[]
+  readonly switches: readonly string[]
+}
+
+export type StrictCliResult =
+  | { readonly ok: true; readonly options: CliOptions }
+  | { readonly ok: false; readonly error: string }
+
 export const parseCli = (args: readonly string[]): CliOptions => {
   const flags = new Map<string, string>()
   const switches = new Set<string>()
@@ -16,6 +25,33 @@ export const parseCli = (args: readonly string[]): CliOptions => {
     else flags.set(value.slice(0, separator), value.slice(separator + 1))
   }
   return { flags, switches }
+}
+
+export const parseStrictCli = (args: readonly string[], spec: StrictCliSpec): StrictCliResult => {
+  const flags = new Map<string, string>()
+  const switches = new Set<string>()
+  const allowedFlags = new Set(spec.flags)
+  const allowedSwitches = new Set(spec.switches)
+  for (const argument of args) {
+    if (!argument.startsWith("--") || argument === "--") {
+      return { ok: false, error: `positional argument is not allowed: ${argument}` }
+    }
+    const value = argument.slice(2)
+    const separator = value.indexOf("=")
+    if (separator === -1) {
+      if (!allowedSwitches.has(value)) return { ok: false, error: `unknown option --${value}` }
+      if (switches.has(value)) return { ok: false, error: `duplicate option --${value}` }
+      switches.add(value)
+      continue
+    }
+    const name = value.slice(0, separator)
+    const flagValue = value.slice(separator + 1)
+    if (!allowedFlags.has(name)) return { ok: false, error: `unknown option --${name}` }
+    if (flagValue.length === 0) return { ok: false, error: `empty value for --${name}` }
+    if (flags.has(name)) return { ok: false, error: `duplicate option --${name}` }
+    flags.set(name, flagValue)
+  }
+  return { ok: true, options: { flags, switches } }
 }
 
 export const flag = (options: CliOptions, name: string): string | undefined =>

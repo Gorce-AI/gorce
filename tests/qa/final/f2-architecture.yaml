@@ -1,0 +1,11 @@
+schema: "gorce.qa.f2-architecture/v1"
+cases:
+  - "clean"
+  - "package-inversion"
+  - "product-inventory-in-core"
+  - "source-tunneling"
+  - "wrong-bun-version"
+  - "wrong-typescript-version"
+  - "alternate-package-manager"
+  - "alternate-core-entrypoint"
+  - "jetbrains-host-code-displacement"
