@@ -9,7 +9,11 @@ import {
   APPROVED_COMMAND_OWNERS,
   APPROVED_PLAN_SHA256,
 } from "../src/verification/expected.js"
-import { validateRepositorySnapshot } from "../src/verification/repository.js"
+import {
+  SOURCE_MODULE_MAX_LINES,
+  TASK6_VERIFIER_MAX_LINES,
+  validateRepositorySnapshot,
+} from "../src/verification/repository.js"
 
 const validManifest = (): Record<string, unknown> => ({
   schema: "gorce.execution-manifest/v1",
@@ -98,5 +102,48 @@ describe("detached input and repository gates", () => {
   test("rejects a missing license", () => {
     const result = validateRepositorySnapshot({ licenseText: null, stagedPaths: [] })
     expect(result.ok).toBe(false)
+  })
+
+  test("keeps the ordinary source limit while allowing bounded Task 6 verifiers", () => {
+    const ordinary = validateRepositorySnapshot({
+      licenseText: "Apache License, Version 2.0",
+      stagedPaths: [],
+      files: [
+        {
+          path: "src/ordinary.ts",
+          content: Array(SOURCE_MODULE_MAX_LINES).fill("line").join("\n"),
+        },
+      ],
+    })
+    expect(ordinary.errors).toContain(
+      `source module exceeds its applicable limit (${SOURCE_MODULE_MAX_LINES} lines; Task 6 verifier modules ${TASK6_VERIFIER_MAX_LINES})`,
+    )
+    const verifier = validateRepositorySnapshot({
+      licenseText: "Apache License, Version 2.0",
+      stagedPaths: [],
+      files: [
+        {
+          path: "src/commands/verify-technology.ts",
+          content: Array(TASK6_VERIFIER_MAX_LINES - 1)
+            .fill("line")
+            .join("\n"),
+        },
+      ],
+    })
+    expect(verifier.ok).toBe(true)
+  })
+
+  test("does not mistake Task 6 evidence paths for credentials", () => {
+    const result = validateRepositorySnapshot({
+      licenseText: "Apache License, Version 2.0",
+      stagedPaths: [],
+      files: [
+        {
+          path: ".github/workflows/ci.yml",
+          content: 'path: "$RUNNER_TEMP/gorce-evidence/task-06-rule-digests.json"',
+        },
+      ],
+    })
+    expect(result.ok).toBe(true)
   })
 })

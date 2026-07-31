@@ -13,15 +13,29 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "expected", "observed", "ok", "error_count"],
+        "required": [
+          "kind",
+          "id",
+          "expected_code",
+          "expected_reason",
+          "observed_code",
+          "observed_reason",
+          "ok",
+          "error_count"
+        ],
         "properties": {
+          "kind": { "enum": ["plan", "runtime-overlay"] },
           "id": { "type": "string" },
-          "expected": { "enum": ["APPROVED", "CHANGES_REQUESTED"] },
-          "observed": { "enum": ["APPROVED", "CHANGES_REQUESTED"] },
+          "expected_code": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+          "expected_reason": { "type": "string", "minLength": 1 },
+          "observed_code": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+          "observed_reason": { "type": "string", "minLength": 1 },
           "ok": { "type": "boolean" },
           "error_count": { "type": "integer", "minimum": 0 }
         }
       }
-    }
+    },
+    "fatal_code": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+    "fatal_reason": { "type": "string", "minLength": 1 }
   }
 }

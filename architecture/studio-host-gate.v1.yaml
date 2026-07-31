@@ -13,6 +13,7 @@ decision_procedure:
     - "daemon lifecycle before extension activation"
     - "workbench-level Activity"
     - "workbench-level permission/bypass visibility"
+  extension_api_requirement: "Every criterion must have a documented stable extension API."
   all_criteria_with_stable_api: "extension-distribution"
   otherwise: "fork-required"
   subjective_override: false

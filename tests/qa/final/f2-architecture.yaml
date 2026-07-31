@@ -9,3 +9,8 @@ cases:
   - "alternate-package-manager"
   - "alternate-core-entrypoint"
   - "jetbrains-host-code-displacement"
+runtime_overlays:
+  - "alternate-cargo-runtime"
+  - "alternate-node-runtime"
+  - "alternate-deno-runtime"
+  - "alternate-non-bun-runtime"

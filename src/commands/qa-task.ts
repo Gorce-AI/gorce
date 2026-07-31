@@ -4,10 +4,20 @@ import { verifyManifestFile } from "../verification/manifest-file.js"
 import { scanRepository } from "../verification/repository.js"
 import { runF2FixtureManifest } from "../verification/f2.js"
 import type { ManifestFileOptions } from "../verification/manifest-file.js"
-import { emit, failed, flag, hasSwitch, parseCli } from "./cli.js"
+import { emit, failed, flag, hasSwitch, parseStrictCli, type StrictCliSpec } from "./cli.js"
+
+const cliSpec: StrictCliSpec = {
+  flags: ["task", "evidence", "fixture", "execution-manifest", "public-key"],
+  switches: ["all", "json"],
+}
 
 const main = async (): Promise<void> => {
-  const options = parseCli(process.argv.slice(2))
+  const parsed = parseStrictCli(process.argv.slice(2), cliSpec)
+  if (!parsed.ok) {
+    emit(failed("qa:task", parsed.error), process.argv.includes("--json"))
+    return
+  }
+  const options = parsed.options
   const task = flag(options, "task")
   const evidencePath = flag(options, "evidence")
   if (task === "F2") {

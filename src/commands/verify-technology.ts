@@ -10,6 +10,7 @@ import {
   TECHNOLOGY_BASELINE_SCHEMA,
   TYPESCRIPT_VERSION,
 } from "../architecture/rules.js"
+import { validateTechnologyBaseline } from "../architecture/semantics.js"
 import {
   readCanonicalYaml,
   type CanonicalYamlMap,
@@ -453,6 +454,14 @@ const main = async (): Promise<void> => {
       TECHNOLOGY_BASELINE_SCHEMA,
     )
     verifyBaselineValues(baseline.value, checks, errors)
+    const semanticErrors = validateTechnologyBaseline(baseline.value)
+    check(
+      checks,
+      errors,
+      "baseline-semantic-policy",
+      semanticErrors.length === 0,
+      semanticErrors.join("; "),
+    )
   } catch (error: unknown) {
     check(
       checks,
