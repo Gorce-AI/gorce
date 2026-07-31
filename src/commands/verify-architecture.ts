@@ -8,6 +8,7 @@ import {
   STUDIO_HOST_GATE_SCHEMA,
   TECHNOLOGY_BASELINE_SCHEMA,
 } from "../architecture/rules.js"
+import { validateStudioHostGate, validateTechnologyBaseline } from "../architecture/semantics.js"
 import {
   readCanonicalYaml,
   type CanonicalYamlMap,
@@ -116,6 +117,14 @@ const verifyRules = async (
       baseline.value["schema"] === BASELINE_SCHEMA_ID,
       BASELINE_SCHEMA_ID,
     )
+    const semanticErrors = validateTechnologyBaseline(baseline.value)
+    check(
+      checks,
+      errors,
+      "technology-rule-semantics",
+      semanticErrors.length === 0,
+      semanticErrors.join("; "),
+    )
   } catch (error: unknown) {
     check(
       checks,
@@ -140,6 +149,8 @@ const verifyRules = async (
         "Pin latest stable Code-OSS and its exact source commit." &&
       stringAt(procedure, "extension_proof") ===
         "Build a TypeScript extension proof against published contracts." &&
+      stringAt(procedure, "extension_api_requirement") ===
+        "Every criterion must have a documented stable extension API." &&
       stringAt(procedure, "all_criteria_with_stable_api") === "extension-distribution" &&
       stringAt(procedure, "otherwise") === "fork-required" &&
       booleanAt(procedure, "subjective_override") === false &&
@@ -151,6 +162,14 @@ const verifyRules = async (
       "studio-host-rule",
       validProcedure,
       "the normative Task-31 procedure and all eight criteria are required",
+    )
+    const semanticErrors = validateStudioHostGate(gate.value, gate.text)
+    check(
+      checks,
+      errors,
+      "studio-host-rule-semantics",
+      semanticErrors.length === 0,
+      semanticErrors.join("; "),
     )
     check(
       checks,

@@ -42,12 +42,33 @@ jobs:
         run: bun run verify:technology -- --bun=1.3.14 --typescript=6.0.3 --strict
       - name: Verify architecture rules
         run: bun run verify:architecture -- --strict
+      - name: Run Biome lint
+        run: bun run lint
+      - name: Run TypeScript typecheck
+        run: bun run typecheck
+      - name: Prepare Task 6 evidence directory
+        run: mkdir -p "$RUNNER_TEMP/gorce-evidence"
       - name: Hash canonical architecture rules
         run: |
-          mkdir -p "$RUNNER_TEMP/gorce-evidence"
           bun run architecture:hash-rules -- \
             --technology=architecture/typescript-bun-baseline.v1.yaml \
             --studio=architecture/studio-host-gate.v1.yaml \
             --evidence="$RUNNER_TEMP/gorce-evidence/task-06-rule-digests.json"
-      - name: Run Task 6 fixture tests
+      - name: Hash canonical architecture rules again
+        run: |
+          bun run architecture:hash-rules -- \
+            --technology=architecture/typescript-bun-baseline.v1.yaml \
+            --studio=architecture/studio-host-gate.v1.yaml \
+            --evidence="$RUNNER_TEMP/gorce-evidence/task-06-rule-digests-again.json"
+          cmp -- "$RUNNER_TEMP/gorce-evidence/task-06-rule-digests.json" "$RUNNER_TEMP/gorce-evidence/task-06-rule-digests-again.json"
+      - name: Run exact F2 fixture QA
+        run: bun run qa:task -- --task=F2 --all --fixture=tests/qa/final/f2-architecture.yaml --evidence="$RUNNER_TEMP/gorce-evidence/final-architecture.json"
+      - name: Run Task 6 tests
         run: bun test
+      - name: Upload Task 6 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-6-evidence
+          path: ${{ runner.temp }}/gorce-evidence
+          if-no-files-found: error

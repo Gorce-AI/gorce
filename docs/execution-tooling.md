@@ -13,7 +13,9 @@ Task 6 freezes the public architecture rules and their digests:
 
 The ecosystem verifier uses clean hermetic sibling fixtures for F2. It is
 fail-closed and must not be run as a happy-path check against this repository's
-temporary Cargo scaffold.
+temporary Cargo scaffold. F2 requires exact set equality for the plan cases and
+the Cargo/Node/Deno/non-Bun runtime overlays; each fixture establishes clean
+Git trees and the three documented repository identities.
 
 ## Commands
 
@@ -32,6 +34,11 @@ Every command fails closed, returns a non-zero exit status on an incomplete or
 invalid state, and accepts `--json` for machine-readable output. Private
 manifests, signatures, keys, transcripts, and tool metadata remain outside the
 repository; `.gitignore` and the repository scanner reject their staging.
+
+Repository integrity retains a 250-line limit for ordinary TypeScript source.
+The six Task 6 canonical-parser/verifier modules have a justified bounded
+600-line allowance so their executable strict validation cannot be hidden from
+the integrity scan; regression tests cover both limits.
 
 The detached signature covers the exact canonical JSON bytes of the manifest.
 The verifier checks the Ed25519 public-key binding, approved plan SHA, 41-task

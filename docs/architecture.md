@@ -19,6 +19,11 @@ not final compliance. They remain untouched so the existing Rust CI `checks`
 job can continue to validate the scaffold while the TypeScript foundation is
 introduced in parallel.
 
+Only the Task-6 repository-rule verifier tolerates that transitional scaffold.
+The ecosystem verifier is stricter: published sibling trees must be clean Git
+repositories with the documented identities and contain no Cargo, Node, Deno,
+or other non-Bun runtime or entrypoint.
+
 ## Ownership and isolation
 
 Core owns the runtime, contracts, generators, and verification tooling. Studio
@@ -26,6 +31,10 @@ and JetBrains remain sovereign sibling repositories. Core may contain generic
 hermetic consumer fixtures, but never Studio or JetBrains production inventory,
 source trees, or cross-repository path dependencies. Product acceptance uses
 published immutable artifacts only.
+
+The documented ecosystem layout is three clean Git siblings: `gorce`,
+`gorce-studio`, and `gorce-jetbrains`, with origins
+`Gorce-AI/gorce`, `Gorce-AI/gorce-studio`, and `Gorce-AI/gorce-jetbrains`.
 
 Changes to the baseline or host gate require an explicit architecture change;
 their canonical bytes and SHA-256 digests are consumed by later tasks.

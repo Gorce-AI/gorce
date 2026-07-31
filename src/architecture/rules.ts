@@ -1,10 +1,4 @@
-import {
-  boolean,
-  list,
-  map,
-  string,
-  type CanonicalYamlSchema,
-} from "./yaml.js"
+import { boolean, list, map, string, type CanonicalYamlSchema } from "./yaml.js"
 
 const baselineSchema = map([
   ["schema", string()],
@@ -26,6 +20,14 @@ const baselineSchema = map([
       ["frozen_lockfile", boolean()],
     ]),
   ],
+  [
+    "dependency_freeze",
+    map([
+      ["direct_and_transitive", string()],
+      ["lockfile_authority", string()],
+    ]),
+  ],
+  ["sovereign_tooling", map([["jetbrains_pins", string()]])],
   [
     "module",
     map([
@@ -91,6 +93,14 @@ const baselineSchema = map([
       ["rule", string()],
     ]),
   ],
+  [
+    "project_validation",
+    map([
+      ["disclaimer", string()],
+      ["build_and_test", string()],
+      ["cross_produced_artifacts", string()],
+    ]),
+  ],
 ])
 
 const studioGateSchema = map([
@@ -103,6 +113,7 @@ const studioGateSchema = map([
       ["source_pin", string()],
       ["extension_proof", string()],
       ["criteria", list(string())],
+      ["extension_api_requirement", string()],
       ["all_criteria_with_stable_api", string()],
       ["otherwise", string()],
       ["subjective_override", boolean()],

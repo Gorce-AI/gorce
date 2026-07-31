@@ -42,7 +42,9 @@ const main = async (): Promise<void> => {
   const coreRoot = resolve(flag(parsed.options, "core") ?? process.cwd())
   const parent = resolve(coreRoot, "..")
   const studioRoot = resolve(flag(parsed.options, "studio") ?? join(parent, "gorce-studio"))
-  const jetbrainsRoot = resolve(flag(parsed.options, "jetbrains") ?? join(parent, "gorce-jetbrains"))
+  const jetbrainsRoot = resolve(
+    flag(parsed.options, "jetbrains") ?? join(parent, "gorce-jetbrains"),
+  )
   const coreInventoryBan = inventory.split(",")
   if (
     coreInventoryBan.some((entry) => !["studio", "jetbrains"].includes(entry)) ||

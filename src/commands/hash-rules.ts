@@ -2,6 +2,7 @@ import { mkdir, rename, unlink, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { emit, failed, flag, parseStrictCli, type StrictCliSpec } from "./cli.js"
 import { STUDIO_HOST_GATE_SCHEMA, TECHNOLOGY_BASELINE_SCHEMA } from "../architecture/rules.js"
+import { validateStudioHostGate, validateTechnologyBaseline } from "../architecture/semantics.js"
 import { readCanonicalYaml } from "../architecture/yaml.js"
 import type { VerificationReport } from "../verification/types.js"
 
@@ -41,6 +42,14 @@ const main = async (): Promise<void> => {
   try {
     const technologyRule = await readCanonicalYaml(resolve(technology), TECHNOLOGY_BASELINE_SCHEMA)
     const studioRule = await readCanonicalYaml(resolve(studio), STUDIO_HOST_GATE_SCHEMA)
+    const technologyErrors = validateTechnologyBaseline(technologyRule.value)
+    const studioErrors = validateStudioHostGate(studioRule.value, studioRule.text)
+    if (technologyErrors.length > 0) {
+      throw new Error(`technology semantic validation failed: ${technologyErrors.join("; ")}`)
+    }
+    if (studioErrors.length > 0) {
+      throw new Error(`Studio host semantic validation failed: ${studioErrors.join("; ")}`)
+    }
     const output = `${JSON.stringify({
       schema: "gorce.architecture-rule-digests/v1",
       technology_sha256: technologyRule.sha256,
