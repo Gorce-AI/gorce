@@ -14,3 +14,13 @@ runtime_overlays:
   - "alternate-node-runtime"
   - "alternate-deno-runtime"
   - "alternate-non-bun-runtime"
+published_source_overlays:
+  - "published-link-source"
+  - "published-file-source"
+  - "published-relative-source"
+  - "published-absolute-source"
+  - "published-git-plus-source"
+  - "published-raw-git-source"
+  - "published-github-shorthand-source"
+  - "published-gradle-files-source"
+  - "published-gradle-project-source"

@@ -3,7 +3,7 @@ import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { parseStrictCli } from "../src/commands/cli.js"
-import { runF2FixtureManifest } from "../src/verification/f2.js"
+import { createF2Fixture, runF2FixtureManifest } from "../src/verification/f2.js"
 import { STUDIO_HOST_GATE_SCHEMA, TECHNOLOGY_BASELINE_SCHEMA } from "../src/architecture/rules.js"
 import {
   validateStudioHostGate,
@@ -89,14 +89,27 @@ describe("F2 architecture fixtures", () => {
             readonly kind: string
             readonly id: string
             readonly ok: boolean
+            readonly expected_code: string
+            readonly expected_reason: string
             readonly observed_code: string
+            readonly observed_reason: string
             readonly error_count: number
           }[]
         }
         expect(payload).toMatchObject({ schema: "gorce.f2-verdict/v1", verdict: "APPROVED" })
-        expect(payload.cases).toHaveLength(13)
+        expect(payload.cases).toHaveLength(22)
         expect(payload.cases.filter((item) => item.kind === "runtime-overlay")).toHaveLength(4)
+        expect(
+          payload.cases.filter((item) => item.kind === "published-source-overlay"),
+        ).toHaveLength(9)
         expect(payload.cases.every((item) => item.ok)).toBe(true)
+        expect(
+          payload.cases.every(
+            (item) =>
+              item.observed_code === item.expected_code &&
+              item.observed_reason === item.expected_reason,
+          ),
+        ).toBe(true)
         expect(payload.cases.find((item) => item.id === "clean")).toMatchObject({
           observed_code: "NONE",
           error_count: 0,
@@ -129,6 +142,50 @@ describe("F2 architecture fixtures", () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
+
+  test(
+    "ecosystem CLI emits an exact verdict for real clean and failing trees",
+    async () => {
+      const clean = await createF2Fixture("clean")
+      const failing = await createF2Fixture("alternate-node-runtime")
+      const runCli = async (
+        fixture: typeof clean,
+      ): Promise<{ readonly exitCode: number; readonly verdict: string }> => {
+        const processHandle = Bun.spawn(
+          [
+            process.execPath,
+            join(process.cwd(), "src/commands/verify-architecture-ecosystem.ts"),
+            "--published-only",
+            `--technology-baseline=${fixture.technologyBaseline}`,
+            "--core-inventory-ban=studio,jetbrains",
+            `--core=${fixture.coreRoot}`,
+            `--studio=${fixture.studioRoot}`,
+            `--jetbrains=${fixture.jetbrainsRoot}`,
+            "--json",
+          ],
+          { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+        )
+        const [exitCode, stdout] = await Promise.all([
+          processHandle.exited,
+          new Response(processHandle.stdout).text(),
+          new Response(processHandle.stderr).text(),
+        ])
+        const payload = JSON.parse(stdout) as { readonly verdict: string }
+        return { exitCode, verdict: payload.verdict }
+      }
+      try {
+        await expect(runCli(clean)).resolves.toEqual({ exitCode: 0, verdict: "APPROVED" })
+        await expect(runCli(failing)).resolves.toEqual({
+          exitCode: 1,
+          verdict: "CHANGES_REQUESTED",
+        })
+      } finally {
+        await rm(clean.root, { recursive: true, force: true })
+        await rm(failing.root, { recursive: true, force: true })
+      }
+    },
+    { timeout: 30000 },
+  )
 
   test("hashing altered canonical rules writes no digest evidence", async () => {
     const directory = await mkdtemp(join(tmpdir(), "gorce-task-06-"))
