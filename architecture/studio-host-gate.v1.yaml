@@ -1,0 +1,18 @@
+schema: "gorce.architecture.studio-host-gate/v1"
+kind: "normative-task-31-decision-procedure"
+decision_procedure:
+  phase: "Task 31"
+  source_pin: "Pin latest stable Code-OSS and its exact source commit."
+  extension_proof: "Build a TypeScript extension proof against published contracts."
+  criteria:
+    - "independent identity/trademark-safe branding"
+    - "independent update channel"
+    - "product-owned telemetry defaults"
+    - "product-owned marketplace policy"
+    - "bundled default plugins"
+    - "daemon lifecycle before extension activation"
+    - "workbench-level Activity"
+    - "workbench-level permission/bypass visibility"
+  all_criteria_with_stable_api: "extension-distribution"
+  otherwise: "fork-required"
+  subjective_override: false

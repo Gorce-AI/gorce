@@ -2,6 +2,7 @@ import { combineReports } from "../verification/combine.js"
 import { verifyEvidenceDirectory } from "../verification/evidence.js"
 import { verifyManifestFile } from "../verification/manifest-file.js"
 import { scanRepository } from "../verification/repository.js"
+import { runF2FixtureManifest } from "../verification/f2.js"
 import type { ManifestFileOptions } from "../verification/manifest-file.js"
 import { emit, failed, flag, hasSwitch, parseCli } from "./cli.js"
 
@@ -9,6 +10,19 @@ const main = async (): Promise<void> => {
   const options = parseCli(process.argv.slice(2))
   const task = flag(options, "task")
   const evidencePath = flag(options, "evidence")
+  if (task === "F2") {
+    const fixture = flag(options, "fixture")
+    if (!hasSwitch(options, "all") || fixture === undefined || evidencePath === undefined) {
+      emit(
+        failed("qa:task:F2", "--task=F2 requires --all, --fixture, and --evidence"),
+        hasSwitch(options, "json"),
+      )
+      return
+    }
+    const report = await runF2FixtureManifest(fixture, evidencePath)
+    emit(report, hasSwitch(options, "json"))
+    return
+  }
   if (task !== "03") {
     emit(failed("qa:task", "--task=03 is required"), hasSwitch(options, "json"))
     return

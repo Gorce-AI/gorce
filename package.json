@@ -16,7 +16,11 @@
     "qa:task": "bun src/commands/qa-task.ts",
     "verify:plan-compliance": "bun src/commands/verify-plan-compliance.ts",
     "docs:verify": "bun src/commands/docs-verify.ts",
-    "verify:evidence": "bun src/commands/evidence.ts"
+    "verify:evidence": "bun src/commands/evidence.ts",
+    "verify:technology": "bun src/commands/verify-technology.ts",
+    "verify:architecture": "bun src/commands/verify-architecture.ts",
+    "architecture:hash-rules": "bun src/commands/hash-rules.ts",
+    "verify:architecture:ecosystem": "bun src/commands/verify-architecture-ecosystem.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",

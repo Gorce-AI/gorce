@@ -1,0 +1,58 @@
+schema: "gorce.architecture.typescript-bun-baseline/v1"
+technology: "TypeScript on Bun"
+versions:
+  bun: "1.3.14"
+  typescript: "6.0.3"
+  biome: "2.2.4"
+package:
+  manager: "Bun"
+  declaration: "bun@1.3.14"
+  lockfile: "bun.lock"
+  frozen_lockfile: true
+module:
+  format: "ESM-only"
+  project_references: true
+compiler_options:
+  strict: true
+  noUncheckedIndexedAccess: true
+  exactOptionalPropertyTypes: true
+  noImplicitOverride: true
+  useUnknownInCatchVariables: true
+  noPropertyAccessFromIndexSignature: true
+  noFallthroughCasesInSwitch: true
+  noUnusedLocals: true
+  noUnusedParameters: true
+  allowUnreachableCode: false
+  allowUnusedLabels: false
+policy:
+  explicit_any: false
+  unchecked_ts_ignore: false
+  unvalidated_external_input: false
+  untyped_error_channel: false
+  exhaustive_discriminated_unions: true
+  external_data_boundary: "branded or schema-derived types"
+commands:
+  install: "bun install --frozen-lockfile"
+  lint: "bun run lint"
+  typecheck: "bun run typecheck"
+  test: "bun test"
+  mutation: "bun run test:mutation"
+  build: "bun run build"
+  reproducibility: "bun run verify:reproducible"
+quality:
+  lint_warnings: "zero"
+  typecheck_emit: "project references with no emit and zero errors"
+  test_scope: "unit, property, integration, and contract tests"
+  critical_mutation_score_minimum: "90%"
+  build_implementation: "Bun bundling/compilation only"
+  release_toolchain: "TypeScript with Bun"
+native_validation:
+  required: true
+  targets:
+    - "macOS 14/15: aarch64"
+    - "macOS 14/15: x86_64"
+    - "Ubuntu 22.04/24.04 glibc: aarch64"
+    - "Ubuntu 22.04/24.04 glibc: x86_64"
+    - "Windows 11: ARM64"
+    - "Windows 11: x86_64"
+  rule: "Every listed target requires native validation before release."

@@ -6,13 +6,22 @@ issues, reviews, and documentation.
 ## Before opening a change
 
 1. Read the relevant architecture and ADR documents.
-2. Keep changes within the crate or API boundary they belong to.
+2. Keep changes within the TypeScript/Bun or API boundary they belong to.
 3. Add or update tests for behavior and contracts.
 4. Update documentation when a public contract changes.
 
 ## Local checks
 
 Run these commands from the repository root:
+
+```text
+bun install --frozen-lockfile
+bun run verify:technology -- --bun=1.3.14 --typescript=6.0.3 --strict
+bun run verify:architecture -- --strict
+bun test
+```
+
+The existing Rust checks validate only the temporary bootstrap scaffold:
 
 ```text
 cargo fmt --all -- --check
