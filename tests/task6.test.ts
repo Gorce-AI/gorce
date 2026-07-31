@@ -1,3 +1,5 @@
+// biome-ignore-all lint/complexity/useLiteralKeys: The test exercises JSON Schema keyword names.
+
 import { describe, expect, test } from "bun:test"
 import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
@@ -5,11 +7,148 @@ import { tmpdir } from "node:os"
 import { parseStrictCli } from "../src/commands/cli.js"
 import { createF2Fixture, runF2FixtureManifest } from "../src/verification/f2.js"
 import { STUDIO_HOST_GATE_SCHEMA, TECHNOLOGY_BASELINE_SCHEMA } from "../src/architecture/rules.js"
+import { verifyEcosystem } from "../src/architecture/ecosystem.js"
 import {
   validateStudioHostGate,
   validateTechnologyBaseline,
 } from "../src/architecture/semantics.js"
 import { parseCanonicalYaml, readCanonicalYaml } from "../src/architecture/yaml.js"
+
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { readonly [key: string]: JsonValue }
+type JsonSchema = { readonly [key: string]: JsonValue }
+
+const isJsonRecord = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+const jsonEqual = (left: JsonValue, right: JsonValue): boolean =>
+  JSON.stringify(left) === JSON.stringify(right)
+
+const schemaTypeMatches = (value: JsonValue, type: JsonValue): boolean => {
+  if (typeof type !== "string") return false
+  if (type === "object") return isJsonRecord(value)
+  if (type === "array") return Array.isArray(value)
+  if (type === "integer") return typeof value === "number" && Number.isInteger(value)
+  return typeof value === type
+}
+
+const schemaValid = (value: JsonValue, schema: JsonSchema, root: JsonSchema): boolean => {
+  if (typeof schema["$ref"] === "string") {
+    const ref = schema["$ref"]
+    if (
+      ref !== "#/$defs/case" &&
+      ref !== "#/$defs/approved-case" &&
+      ref !== "#/$defs/complete-case-set" &&
+      ref !== "#/$defs/complete-approved-case-set"
+    )
+      return false
+    const name = ref.slice("#/$defs/".length)
+    const defs = root["$defs"] ?? null
+    const definition = isJsonRecord(defs) ? (defs[name] ?? null) : null
+    if (!isJsonRecord(definition)) return false
+    return schemaValid(value, definition, root)
+  }
+  if (schema["type"] !== undefined && !schemaTypeMatches(value, schema["type"])) return false
+  if (schema["const"] !== undefined && !jsonEqual(value, schema["const"])) return false
+  if (Array.isArray(schema["enum"]) && !schema["enum"].some((item) => jsonEqual(value, item)))
+    return false
+  if (
+    typeof schema["pattern"] === "string" &&
+    (typeof value !== "string" || !new RegExp(schema["pattern"]).test(value))
+  )
+    return false
+  if (
+    typeof schema["minLength"] === "number" &&
+    (typeof value !== "string" || value.length < schema["minLength"])
+  )
+    return false
+  if (
+    typeof schema["minimum"] === "number" &&
+    (typeof value !== "number" || value < schema["minimum"])
+  )
+    return false
+  if (
+    typeof schema["minItems"] === "number" &&
+    (!Array.isArray(value) || value.length < schema["minItems"])
+  )
+    return false
+  if (
+    typeof schema["maxItems"] === "number" &&
+    (!Array.isArray(value) || value.length > schema["maxItems"])
+  )
+    return false
+  if (schema["uniqueItems"] === true && Array.isArray(value)) {
+    const serialized = value.map((item) => JSON.stringify(item))
+    if (new Set(serialized).size !== serialized.length) return false
+  }
+  if (Array.isArray(schema["required"]) && isJsonRecord(value)) {
+    if (schema["required"].some((key) => typeof key !== "string" || !Object.hasOwn(value, key)))
+      return false
+  }
+  if (schema["additionalProperties"] === false && isJsonRecord(value)) {
+    const properties = isJsonRecord(schema["properties"] ?? null)
+      ? (schema["properties"] as JsonSchema)
+      : {}
+    if (Object.keys(value).some((key) => !Object.hasOwn(properties, key))) return false
+  }
+  if (isJsonRecord(schema["properties"] ?? null) && isJsonRecord(value)) {
+    for (const [key, child] of Object.entries(schema["properties"] as JsonSchema)) {
+      if (
+        Object.hasOwn(value, key) &&
+        isJsonRecord(child) &&
+        !schemaValid(value[key] ?? null, child, root)
+      )
+        return false
+    }
+  }
+  if (isJsonRecord(schema["items"] ?? null) && Array.isArray(value)) {
+    if (value.some((item) => !schemaValid(item, schema["items"] as JsonSchema, root))) return false
+  }
+  if (isJsonRecord(schema["contains"] ?? null) && Array.isArray(value)) {
+    const matches = value.filter((item) =>
+      schemaValid(item, schema["contains"] as JsonSchema, root),
+    ).length
+    const minimum = typeof schema["minContains"] === "number" ? schema["minContains"] : 1
+    const maximum =
+      typeof schema["maxContains"] === "number" ? schema["maxContains"] : Number.POSITIVE_INFINITY
+    if (matches < minimum || matches > maximum) return false
+  }
+  if (
+    Array.isArray(schema["allOf"]) &&
+    schema["allOf"].some((child) => !isJsonRecord(child) || !schemaValid(value, child, root))
+  )
+    return false
+  if (
+    Array.isArray(schema["anyOf"]) &&
+    !schema["anyOf"].some((child) => isJsonRecord(child) && schemaValid(value, child, root))
+  )
+    return false
+  if (
+    Array.isArray(schema["oneOf"]) &&
+    schema["oneOf"].filter((child) => isJsonRecord(child) && schemaValid(value, child, root))
+      .length !== 1
+  )
+    return false
+  if (isJsonRecord(schema["not"] ?? null) && schemaValid(value, schema["not"] as JsonSchema, root))
+    return false
+  if (isJsonRecord(schema["if"] ?? null)) {
+    if (
+      schemaValid(value, schema["if"] as JsonSchema, root) &&
+      isJsonRecord(schema["then"] ?? null) &&
+      !schemaValid(value, schema["then"] as JsonSchema, root)
+    )
+      return false
+  }
+  return true
+}
+
+const validateF2EvidenceSchema = (value: JsonValue, schema: JsonValue): boolean =>
+  isJsonRecord(schema) && schemaValid(value, schema, schema)
 
 describe("Task 6 canonical architecture rules", () => {
   test("reads both public rules as canonical UTF-8 YAML", async () => {
@@ -114,6 +253,48 @@ describe("F2 architecture fixtures", () => {
           observed_code: "NONE",
           error_count: 0,
         })
+        const schema = JSON.parse(
+          await readFile("tests/qa/final/f2-verdict.schema.json", "utf8"),
+        ) as JsonValue
+        expect(validateF2EvidenceSchema(payload as unknown as JsonValue, schema)).toBe(true)
+        const approvedWithFailure = structuredClone(payload) as unknown as {
+          verdict: string
+          cases: { ok: boolean; error_count: number }[]
+        }
+        const failedCase = approvedWithFailure.cases[0]
+        if (failedCase === undefined) throw new Error("approved evidence has no first case")
+        failedCase.ok = false
+        failedCase.error_count = 1
+        expect(validateF2EvidenceSchema(approvedWithFailure as unknown as JsonValue, schema)).toBe(
+          false,
+        )
+        const approvedWithMismatch = structuredClone(payload) as unknown as {
+          cases: { observed_code: string }[]
+        }
+        const mismatchedCase = approvedWithMismatch.cases[0]
+        if (mismatchedCase === undefined) throw new Error("approved evidence has no first case")
+        mismatchedCase.observed_code = "ECO_MUTATED"
+        expect(validateF2EvidenceSchema(approvedWithMismatch as unknown as JsonValue, schema)).toBe(
+          false,
+        )
+        const missingCase = structuredClone(payload) as unknown as { cases: unknown[] }
+        missingCase.cases.pop()
+        expect(validateF2EvidenceSchema(missingCase as unknown as JsonValue, schema)).toBe(false)
+        const duplicateCase = structuredClone(payload) as unknown as { cases: unknown[] }
+        duplicateCase.cases[21] = duplicateCase.cases[0]
+        expect(validateF2EvidenceSchema(duplicateCase as unknown as JsonValue, schema)).toBe(false)
+        const changesRequested = structuredClone(payload) as unknown as {
+          verdict: string
+          cases: { ok: boolean; error_count: number }[]
+        }
+        changesRequested.verdict = "CHANGES_REQUESTED"
+        const requestedCase = changesRequested.cases[0]
+        if (requestedCase === undefined) throw new Error("approved evidence has no first case")
+        requestedCase.ok = false
+        requestedCase.error_count = 1
+        expect(validateF2EvidenceSchema(changesRequested as unknown as JsonValue, schema)).toBe(
+          true,
+        )
       } finally {
         await rm(directory, { recursive: true, force: true })
       }
@@ -182,6 +363,101 @@ describe("F2 architecture fixtures", () => {
       } finally {
         await rm(clean.root, { recursive: true, force: true })
         await rm(failing.root, { recursive: true, force: true })
+      }
+    },
+    { timeout: 30000 },
+  )
+
+  test(
+    "structurally rejects Git, workspace, and protocol source specifications",
+    async () => {
+      const fixtureNames = [
+        "published-github-protocol-source",
+        "published-git-ssh-source",
+        "published-git-url-source",
+        "published-workspace-source",
+      ]
+      for (const name of fixtureNames) {
+        const fixture = await createF2Fixture(name)
+        try {
+          const report = await verifyEcosystem({
+            coreRoot: fixture.coreRoot,
+            studioRoot: fixture.studioRoot,
+            jetbrainsRoot: fixture.jetbrainsRoot,
+            technologyBaseline: fixture.technologyBaseline,
+            coreInventoryBan: ["studio", "jetbrains"],
+            publishedOnly: true,
+          })
+          expect(report.ok).toBe(false)
+          expect(report.errors[0]).toBe(
+            "ECO_PUBLISHED_SOURCE_TUNNELING: siblings must consume published immutable artifacts only",
+          )
+        } finally {
+          await rm(fixture.root, { recursive: true, force: true })
+        }
+      }
+    },
+    { timeout: 30000 },
+  )
+
+  test(
+    "does not hide real imports in detector paths and accepts Bun shebang bins",
+    async () => {
+      const detector = await createF2Fixture("detector-real-import")
+      try {
+        const report = await verifyEcosystem({
+          coreRoot: detector.coreRoot,
+          studioRoot: detector.studioRoot,
+          jetbrainsRoot: detector.jetbrainsRoot,
+          technologyBaseline: detector.technologyBaseline,
+          coreInventoryBan: ["studio", "jetbrains"],
+          publishedOnly: true,
+        })
+        expect(report.errors[0]).toBe(
+          "ECO_CORE_PACKAGE_INVERSION: core must not depend on Studio or JetBrains packages",
+        )
+      } finally {
+        await rm(detector.root, { recursive: true, force: true })
+      }
+
+      for (const name of ["bun-shebang-bin", "bun-js-shebang-bin"]) {
+        const fixture = await createF2Fixture(name)
+        try {
+          const report = await verifyEcosystem({
+            coreRoot: fixture.coreRoot,
+            studioRoot: fixture.studioRoot,
+            jetbrainsRoot: fixture.jetbrainsRoot,
+            technologyBaseline: fixture.technologyBaseline,
+            coreInventoryBan: ["studio", "jetbrains"],
+            publishedOnly: true,
+          })
+          expect(report.ok).toBe(true)
+        } finally {
+          await rm(fixture.root, { recursive: true, force: true })
+        }
+      }
+    },
+    { timeout: 30000 },
+  )
+
+  test(
+    "tokenizes script options before rejecting a Node runtime",
+    async () => {
+      const fixture = await createF2Fixture("alternate-node-script")
+      try {
+        const report = await verifyEcosystem({
+          coreRoot: fixture.coreRoot,
+          studioRoot: fixture.studioRoot,
+          jetbrainsRoot: fixture.jetbrainsRoot,
+          technologyBaseline: fixture.technologyBaseline,
+          coreInventoryBan: ["studio", "jetbrains"],
+          publishedOnly: true,
+        })
+        expect(report.errors[0]).toBe(
+          "ECO_NON_BUN_RUNTIME: core ecosystem trees must use Bun rather than Cargo, Node, Deno, or another runtime",
+        )
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true })
       }
     },
     { timeout: 30000 },

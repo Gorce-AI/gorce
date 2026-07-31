@@ -1,3 +1,4 @@
+// biome-ignore-all lint/complexity/useLiteralKeys: Canonical manifest keys are intentionally explicit.
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from "node:fs/promises"
@@ -7,14 +8,12 @@ import { map, list, readCanonicalYaml, string } from "../architecture/yaml.js"
 import { verifyEcosystem } from "../architecture/ecosystem.js"
 import { TECHNOLOGY_BASELINE_SCHEMA } from "../architecture/rules.js"
 import type { VerificationReport } from "./types.js"
-
 const fixtureSchema = map([
   ["schema", string()],
   ["cases", list(string())],
   ["runtime_overlays", list(string())],
   ["published_source_overlays", list(string())],
 ])
-
 const planCases = [
   "clean",
   "package-inversion",
@@ -26,14 +25,12 @@ const planCases = [
   "alternate-core-entrypoint",
   "jetbrains-host-code-displacement",
 ] as const
-
 const runtimeOverlayCases = [
   "alternate-cargo-runtime",
   "alternate-node-runtime",
   "alternate-deno-runtime",
   "alternate-non-bun-runtime",
 ] as const
-
 const publishedSourceOverlayCases = [
   "published-link-source",
   "published-file-source",
@@ -45,12 +42,10 @@ const publishedSourceOverlayCases = [
   "published-gradle-files-source",
   "published-gradle-project-source",
 ] as const
-
 interface ExpectedFailure {
   readonly code: string
   readonly reason: string
 }
-
 const expectedFailures: Readonly<Record<string, ExpectedFailure>> = {
   "package-inversion": {
     code: "ECO_CORE_PACKAGE_INVERSION",
@@ -138,12 +133,10 @@ const expectedFailures: Readonly<Record<string, ExpectedFailure>> = {
     reason: "siblings must consume published immutable artifacts only",
   },
 }
-
 const setEquals = (actual: readonly string[], expected: readonly string[]): boolean =>
   actual.length === expected.length &&
   new Set(actual).size === actual.length &&
   expected.every((item) => actual.includes(item))
-
 const fixturePackage = {
   name: "@gorce-ai/gorce-core-fixture",
   version: "0.0.0",
@@ -153,7 +146,6 @@ const fixturePackage = {
   bin: { "gorce-fixture": "./src/index.ts" },
   devDependencies: { "@biomejs/biome": "2.2.4", typescript: "6.0.3" },
 } as const
-
 const studioPackage = {
   name: "@gorce-ai/gorce-studio-fixture",
   version: "0.0.0",
@@ -163,7 +155,6 @@ const studioPackage = {
   bin: { "gorce-studio-fixture": "./src/index.ts" },
   devDependencies: { "@biomejs/biome": "2.2.4", typescript: "6.0.3" },
 } as const
-
 const initializeRepository = (root: string, identity: string): void => {
   execFileSync("git", ["-C", root, "init", "--quiet"], { stdio: "ignore" })
   execFileSync("git", ["-C", root, "config", "user.name", "Gorce F2 Fixture"], { stdio: "ignore" })
@@ -214,8 +205,8 @@ const fixtureFiles = async (root: string, name: string): Promise<void> => {
 
   if (name === "package-inversion") {
     await writeFile(
-      join(core, "src/inversion.ts"),
-      'export const dependency = "@gorce-ai/studio"\n',
+      join(core, "package.json"),
+      `${JSON.stringify({ ...fixturePackage, dependencies: { "@gorce-ai/studio": "0.1.0" } })}\n`,
     )
   } else if (name === "product-inventory-in-core") {
     await mkdir(join(core, "studio"), { recursive: true })
@@ -255,8 +246,14 @@ const fixtureFiles = async (root: string, name: string): Promise<void> => {
       join(core, "package.json"),
       `${JSON.stringify({ ...fixturePackage, bin: { "gorce-fixture": "./cli.mjs" } })}\n`,
     )
+  } else if (name === "alternate-node-script") {
+    await writeFile(join(core, "cli.ts"), 'console.log("node loader")\n')
+    await writeFile(
+      join(core, "package.json"),
+      `${JSON.stringify({ ...fixturePackage, scripts: { check: "node --loader tsx cli.ts" } })}\n`,
+    )
   } else if (name === "alternate-deno-runtime") {
-    await writeFile(join(core, "deno.json"), "{}\n")
+    await writeFile(join(core, "deno.json"), '{"tasks":{"check":"deno run deno-runtime.ts"}}\n')
     await writeFile(
       join(core, "package.json"),
       `${JSON.stringify({ ...fixturePackage, scripts: { check: "deno run deno-runtime.ts" } })}\n`,
@@ -281,8 +278,8 @@ const fixtureFiles = async (root: string, name: string): Promise<void> => {
     await writeFile(join(studio, "src/relative.ts"), 'import "../../gorce/src/index.ts"\n')
   } else if (name === "published-absolute-source") {
     await writeFile(
-      join(studio, "src/absolute.ts"),
-      'export const source = "/workspace/gorce/src/index.ts"\n',
+      join(studio, "package.json"),
+      `${JSON.stringify({ ...studioPackage, dependencies: { core: "/workspace/gorce" } })}\n`,
     )
   } else if (name === "published-git-plus-source") {
     await writeFile(
@@ -308,6 +305,39 @@ const fixtureFiles = async (root: string, name: string): Promise<void> => {
     await writeFile(
       join(jetbrains, "build.gradle.kts"),
       'dependencies { implementation(project(":gorce")) }\n',
+    )
+  } else if (name === "published-github-protocol-source") {
+    await writeFile(
+      join(studio, "package.json"),
+      `${JSON.stringify({ ...studioPackage, dependencies: { core: "github:Gorce-AI/gorce" } })}\n`,
+    )
+  } else if (name === "published-git-ssh-source") {
+    await writeFile(
+      join(studio, "package.json"),
+      `${JSON.stringify({ ...studioPackage, dependencies: { core: "git+ssh://git@github.com/Gorce-AI/gorce.git" } })}\n`,
+    )
+  } else if (name === "published-git-url-source") {
+    await writeFile(
+      join(studio, "package.json"),
+      `${JSON.stringify({ ...studioPackage, dependencies: { core: "git://github.com/Gorce-AI/gorce.git" } })}\n`,
+    )
+  } else if (name === "published-workspace-source") {
+    await writeFile(
+      join(studio, "package.json"),
+      `${JSON.stringify({ ...studioPackage, dependencies: { core: "workspace:../gorce" } })}\n`,
+    )
+  } else if (name === "detector-real-import") {
+    await mkdir(join(core, "src/architecture"), { recursive: true })
+    await writeFile(
+      join(core, "src/architecture/ecosystem.ts"),
+      'import "@gorce-ai/studio"\nexport const detector = true\n',
+    )
+  } else if (name === "bun-shebang-bin" || name === "bun-js-shebang-bin") {
+    const extension = name === "bun-js-shebang-bin" ? "js" : "mjs"
+    await writeFile(join(core, `src/cli.${extension}`), '#!/usr/bin/env bun\nconsole.log("bun")\n')
+    await writeFile(
+      join(core, "package.json"),
+      `${JSON.stringify({ ...fixturePackage, bin: { "gorce-fixture": `./src/cli.${extension}` } })}\n`,
     )
   }
 
