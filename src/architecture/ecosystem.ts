@@ -37,10 +37,9 @@ const alternateLocks = new Set([
   "yarn.lock",
   "bun.lockb",
 ])
-const verifierFiles = new Set([
+const safeDetectorSourcePaths = new Set([
   "src/architecture/ecosystem.ts",
   "src/commands/verify-architecture.ts",
-  "src/commands/verify-architecture-ecosystem.ts",
   "src/verification/f2.ts",
 ])
 const nonBunRuntimeNames = new Set([
@@ -84,11 +83,7 @@ const walk = async (root: string): Promise<readonly string[]> => {
       if (entry.isSymbolicLink()) throw new Error(`symlink is not allowed: ${relative(root, path)}`)
       if (entry.isDirectory()) {
         if (!ignoredDirectories.has(entry.name)) await visit(path)
-      } else if (
-        entry.isFile() &&
-        !ignoredDirectories.has(entry.name) &&
-        !verifierFiles.has(relative(root, path))
-      ) {
+      } else if (entry.isFile() && !ignoredDirectories.has(entry.name)) {
         files.push(path)
       }
     }
@@ -172,9 +167,32 @@ const checkGitTrees = async (
 const nonBunRuntimeViolation = (relativePath: string, text: string): boolean =>
   nonBunRuntimeNames.has(relativePath.split(/[\\/]/).at(-1) ?? "") ||
   /(?:^|[/\\])crates[/\\]|["'](?:node|deno|python|cargo)["']\s*:/i.test(relativePath) ||
+  /^#!.*\b(?:node|nodejs|deno|python3?|cargo|go)\b/im.test(text) ||
+  /\b(?:node|nodejs|deno|python3?|cargo|go)\s+(?:\.{0,2}[\\/]|[A-Za-z])[^\n;&|]*/i.test(text) ||
   /["']engines["']\s*:\s*\{[^}]*["']node["']|runtime\s*[:=]\s*["'](?:node|deno|python|cargo)["']/i.test(
     text,
-  )
+  ) ||
+  /["']bin["']\s*:\s*\{[^}]*\.(?:mjs|cjs|js)["']/is.test(text)
+
+const sourceScanText = (relativePath: string, text: string): string => {
+  if (!safeDetectorSourcePaths.has(relativePath)) return text
+  return text
+    .replaceAll("gorce-(studio|jetbrains)", "detector-product-token")
+    .replaceAll("@gorce-ai\\/(studio|jetbrains)", "detector-package-token")
+    .replaceAll("(?:file|git|workspace):", "detector-source-token")
+    .replaceAll("compositeBuild|includeBuild", "detector-build-token")
+    .replaceAll("file:../gorce-studio", "detector-fixture-source-token")
+    .replaceAll("@gorce-ai/studio", "detector-fixture-package-token")
+}
+
+const publishedSourceReference = (text: string): boolean =>
+  /(?:^|["'\s])(?:link|file|workspace):[^"'\s]+/i.test(text) ||
+  /(?:^|["'\s])(?:\.\.?[/\\]|\/)[^"'\s]*gorce[^"'\s]*/i.test(text) ||
+  /git\+https?:\/\/|(?:^|["'\s])(?:https?:\/\/(?:github|gitlab|bitbucket)\.com\/|git@github\.com:|git:\/\/|ssh:\/\/)/i.test(
+    text,
+  ) ||
+  /(?:^|["'\s])gorce-ai\/(?:gorce|gorce-studio|gorce-jetbrains)(?:["'\s]|$)/i.test(text) ||
+  /\b(?:files|project|includeBuild)\s*\(/i.test(text)
 
 const collectProductionText = async (
   root: string,
@@ -326,14 +344,22 @@ const checkCoreInventoryAndTunneling = async (
     }
     for (const { path, text } of files) {
       const relativePath = relative(options.coreRoot, path)
+      const scannedText = sourceScanText(relativePath, text)
       const lowerPath = relativePath.toLowerCase()
-      if (/(^|[/_-])(studio|jetbrains)([/_.-]|$)|gorce-(studio|jetbrains)/i.test(relativePath)) {
+      if (/(?:jetbrains.*host|host-code|kotlin|gradle)/i.test(relativePath)) {
+        violate(
+          "ECO_JETBRAINS_HOST_DISPLACEMENT",
+          "JetBrains host code must remain in the JetBrains repository",
+        )
+      } else if (
+        /(^|[/_-])(studio|jetbrains)([/_.-]|$)|gorce-(studio|jetbrains)/i.test(relativePath)
+      ) {
         violate(
           "ECO_CORE_PRODUCT_INVENTORY",
           "core must not contain Studio or JetBrains production inventory",
         )
       }
-      if (nonBunRuntimeViolation(relativePath, text)) {
+      if (nonBunRuntimeViolation(relativePath, scannedText)) {
         violate(
           "ECO_NON_BUN_RUNTIME",
           "core ecosystem trees must use Bun rather than Cargo, Node, Deno, or another runtime",
@@ -341,10 +367,10 @@ const checkCoreInventoryAndTunneling = async (
       }
       if (
         /gorce-(studio|jetbrains)|@gorce-ai\/(studio|jetbrains)|(?:file|git|workspace):|compositeBuild|includeBuild/i.test(
-          text,
+          scannedText,
         )
       ) {
-        if (/(?:file|git|workspace):|compositeBuild|includeBuild/i.test(text)) {
+        if (/(?:file|git|workspace):|compositeBuild|includeBuild/i.test(scannedText)) {
           violate(
             "ECO_SOURCE_TUNNELING",
             "core must not tunnel to a sibling source tree or unpublished dependency",
@@ -358,7 +384,7 @@ const checkCoreInventoryAndTunneling = async (
       }
       if (
         lowerPath.startsWith("src/") &&
-        /from\s+["'][^"']*(studio|jetbrains)[^"']*["']/i.test(text)
+        /from\s+["'][^"']*(studio|jetbrains)[^"']*["']/i.test(scannedText)
       ) {
         violate(
           "ECO_CORE_PACKAGE_INVERSION",
@@ -467,9 +493,7 @@ const checkPublishedOnly = async (
       ...(await collectProductionText(options.studioRoot)),
       ...(await collectProductionText(options.jetbrainsRoot)),
     ]
-    const sourceReferences = files.filter(({ text }) =>
-      /(?:file|git|workspace):|\.\.\/gorce(?:["'/]|$)|includeBuild/i.test(text),
-    )
+    const sourceReferences = files.filter(({ text }) => publishedSourceReference(text))
     addCheck(
       checks,
       errors,
@@ -507,6 +531,7 @@ export const verifyEcosystem = async (
     schema: "gorce.verification-result/v1",
     command: "verify:architecture:ecosystem",
     ok: errors.length === 0,
+    verdict: errors.length === 0 ? "APPROVED" : "CHANGES_REQUESTED",
     checks,
     errors,
   }

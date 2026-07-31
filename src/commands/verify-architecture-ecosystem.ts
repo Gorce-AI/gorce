@@ -7,10 +7,17 @@ const cliSpec: StrictCliSpec = {
   switches: ["published-only", "json"],
 }
 
+const emitEcosystem = (report: ReturnType<typeof failed>, json: boolean): void => {
+  emit({ ...report, verdict: report.ok ? "APPROVED" : "CHANGES_REQUESTED" }, json)
+}
+
 const main = async (): Promise<void> => {
   const parsed = parseStrictCli(process.argv.slice(2), cliSpec)
   if (!parsed.ok) {
-    emit(failed("verify:architecture:ecosystem", parsed.error), process.argv.includes("--json"))
+    emitEcosystem(
+      failed("verify:architecture:ecosystem", parsed.error),
+      process.argv.includes("--json"),
+    )
     return
   }
   const digest = flag(parsed.options, "technology-baseline")
@@ -20,7 +27,7 @@ const main = async (): Promise<void> => {
     inventory === undefined ||
     !parsed.options.switches.has("published-only")
   ) {
-    emit(
+    emitEcosystem(
       failed(
         "verify:architecture:ecosystem",
         "--published-only, --technology-baseline, and --core-inventory-ban are required",
@@ -30,7 +37,7 @@ const main = async (): Promise<void> => {
     return
   }
   if (!/^[0-9a-f]{64}$/.test(digest)) {
-    emit(
+    emitEcosystem(
       failed(
         "verify:architecture:ecosystem",
         "--technology-baseline must be a lowercase SHA-256 digest",
@@ -50,7 +57,7 @@ const main = async (): Promise<void> => {
     coreInventoryBan.some((entry) => !["studio", "jetbrains"].includes(entry)) ||
     new Set(coreInventoryBan).size !== coreInventoryBan.length
   ) {
-    emit(
+    emitEcosystem(
       failed(
         "verify:architecture:ecosystem",
         "--core-inventory-ban may contain studio and jetbrains exactly once",
@@ -68,9 +75,9 @@ const main = async (): Promise<void> => {
       coreInventoryBan,
       publishedOnly: true,
     })
-    emit(report, parsed.options.switches.has("json"))
+    emitEcosystem(report, parsed.options.switches.has("json"))
   } catch (error: unknown) {
-    emit(
+    emitEcosystem(
       failed(
         "verify:architecture:ecosystem",
         error instanceof Error ? error.message : "unexpected ecosystem verification failure",
@@ -81,7 +88,7 @@ const main = async (): Promise<void> => {
 }
 
 main().catch((error: unknown) => {
-  emit(
+  emitEcosystem(
     failed(
       "verify:architecture:ecosystem",
       error instanceof Error ? error.message : "unexpected ecosystem verification failure",

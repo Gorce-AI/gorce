@@ -11,6 +11,10 @@ Task 6 freezes the public architecture rules and their digests:
 - `bun run architecture:hash-rules -- --technology=architecture/typescript-bun-baseline.v1.yaml --studio=architecture/studio-host-gate.v1.yaml --evidence=<path>`
 - `bun run verify:architecture:ecosystem -- --published-only --technology-baseline=<digest> --core-inventory-ban=studio,jetbrains`
 
+The ecosystem command emits `verdict=APPROVED` only for a validated clean
+three-repository ecosystem; every failure emits `verdict=CHANGES_REQUESTED`
+and retains a non-zero exit status.
+
 The ecosystem verifier uses clean hermetic sibling fixtures for F2. It is
 fail-closed and must not be run as a happy-path check against this repository's
 temporary Cargo scaffold. F2 requires exact set equality for the plan cases and

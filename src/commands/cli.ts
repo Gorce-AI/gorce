@@ -69,6 +69,7 @@ export const failed = (command: string, detail: string): VerificationReport => (
 
 const human = (report: VerificationReport): string => {
   const lines = [`${report.ok ? "PASS" : "FAIL"} ${report.command}`]
+  if (report.verdict !== undefined) lines.push(`verdict=${report.verdict}`)
   for (const check of report.checks) {
     const suffix = check.detail === undefined ? "" : `: ${check.detail}`
     lines.push(`- ${check.status.toUpperCase()} ${check.name}${suffix}`)

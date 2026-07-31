@@ -12,6 +12,7 @@ const fixtureSchema = map([
   ["schema", string()],
   ["cases", list(string())],
   ["runtime_overlays", list(string())],
+  ["published_source_overlays", list(string())],
 ])
 
 const planCases = [
@@ -31,6 +32,18 @@ const runtimeOverlayCases = [
   "alternate-node-runtime",
   "alternate-deno-runtime",
   "alternate-non-bun-runtime",
+] as const
+
+const publishedSourceOverlayCases = [
+  "published-link-source",
+  "published-file-source",
+  "published-relative-source",
+  "published-absolute-source",
+  "published-git-plus-source",
+  "published-raw-git-source",
+  "published-github-shorthand-source",
+  "published-gradle-files-source",
+  "published-gradle-project-source",
 ] as const
 
 interface ExpectedFailure {
@@ -87,6 +100,42 @@ const expectedFailures: Readonly<Record<string, ExpectedFailure>> = {
   "alternate-non-bun-runtime": {
     code: "ECO_NON_BUN_RUNTIME",
     reason: "core ecosystem trees must use Bun rather than Cargo, Node, Deno, or another runtime",
+  },
+  "published-link-source": {
+    code: "ECO_PUBLISHED_SOURCE_TUNNELING",
+    reason: "siblings must consume published immutable artifacts only",
+  },
+  "published-file-source": {
+    code: "ECO_PUBLISHED_SOURCE_TUNNELING",
+    reason: "siblings must consume published immutable artifacts only",
+  },
+  "published-relative-source": {
+    code: "ECO_PUBLISHED_SOURCE_TUNNELING",
+    reason: "siblings must consume published immutable artifacts only",
+  },
+  "published-absolute-source": {
+    code: "ECO_PUBLISHED_SOURCE_TUNNELING",
+    reason: "siblings must consume published immutable artifacts only",
+  },
+  "published-git-plus-source": {
+    code: "ECO_PUBLISHED_SOURCE_TUNNELING",
+    reason: "siblings must consume published immutable artifacts only",
+  },
+  "published-raw-git-source": {
+    code: "ECO_PUBLISHED_SOURCE_TUNNELING",
+    reason: "siblings must consume published immutable artifacts only",
+  },
+  "published-github-shorthand-source": {
+    code: "ECO_PUBLISHED_SOURCE_TUNNELING",
+    reason: "siblings must consume published immutable artifacts only",
+  },
+  "published-gradle-files-source": {
+    code: "ECO_PUBLISHED_SOURCE_TUNNELING",
+    reason: "siblings must consume published immutable artifacts only",
+  },
+  "published-gradle-project-source": {
+    code: "ECO_PUBLISHED_SOURCE_TUNNELING",
+    reason: "siblings must consume published immutable artifacts only",
   },
 }
 
@@ -201,11 +250,65 @@ const fixtureFiles = async (root: string, name: string): Promise<void> => {
     await writeFile(join(core, "Cargo.lock"), "version = 3\n")
     await writeFile(join(core, "rust-toolchain.toml"), '[toolchain]\nchannel = "stable"\n')
   } else if (name === "alternate-node-runtime") {
-    await writeFile(join(core, "node-runtime.mjs"), 'console.log("node")\n')
+    await writeFile(join(core, "cli.mjs"), '#!/usr/bin/env node\nconsole.log("node")\n')
+    await writeFile(
+      join(core, "package.json"),
+      `${JSON.stringify({ ...fixturePackage, bin: { "gorce-fixture": "./cli.mjs" } })}\n`,
+    )
   } else if (name === "alternate-deno-runtime") {
     await writeFile(join(core, "deno.json"), "{}\n")
+    await writeFile(
+      join(core, "package.json"),
+      `${JSON.stringify({ ...fixturePackage, scripts: { check: "deno run deno-runtime.ts" } })}\n`,
+    )
   } else if (name === "alternate-non-bun-runtime") {
     await writeFile(join(core, "python-runtime.py"), 'print("python")\n')
+    await writeFile(
+      join(core, "package.json"),
+      `${JSON.stringify({ ...fixturePackage, scripts: { check: "python3 python-runtime.py" } })}\n`,
+    )
+  } else if (name === "published-link-source") {
+    await writeFile(
+      join(studio, "package.json"),
+      `${JSON.stringify({ ...studioPackage, dependencies: { core: "link:../gorce" } })}\n`,
+    )
+  } else if (name === "published-file-source") {
+    await writeFile(
+      join(studio, "package.json"),
+      `${JSON.stringify({ ...studioPackage, dependencies: { core: "file:../gorce" } })}\n`,
+    )
+  } else if (name === "published-relative-source") {
+    await writeFile(join(studio, "src/relative.ts"), 'import "../../gorce/src/index.ts"\n')
+  } else if (name === "published-absolute-source") {
+    await writeFile(
+      join(studio, "src/absolute.ts"),
+      'export const source = "/workspace/gorce/src/index.ts"\n',
+    )
+  } else if (name === "published-git-plus-source") {
+    await writeFile(
+      join(studio, "package.json"),
+      `${JSON.stringify({ ...studioPackage, dependencies: { core: "git+https://github.com/Gorce-AI/gorce.git" } })}\n`,
+    )
+  } else if (name === "published-raw-git-source") {
+    await writeFile(
+      join(studio, "package.json"),
+      `${JSON.stringify({ ...studioPackage, dependencies: { core: "https://github.com/Gorce-AI/gorce.git" } })}\n`,
+    )
+  } else if (name === "published-github-shorthand-source") {
+    await writeFile(
+      join(studio, "package.json"),
+      `${JSON.stringify({ ...studioPackage, dependencies: { core: "Gorce-AI/gorce-studio" } })}\n`,
+    )
+  } else if (name === "published-gradle-files-source") {
+    await writeFile(
+      join(jetbrains, "build.gradle.kts"),
+      'dependencies { implementation(files("../gorce/build/libs/core.jar")) }\n',
+    )
+  } else if (name === "published-gradle-project-source") {
+    await writeFile(
+      join(jetbrains, "build.gradle.kts"),
+      'dependencies { implementation(project(":gorce")) }\n',
+    )
   }
 
   initializeRepository(core, "gorce")
@@ -213,12 +316,41 @@ const fixtureFiles = async (root: string, name: string): Promise<void> => {
   initializeRepository(jetbrains, "gorce-jetbrains")
 }
 
+export interface F2Fixture {
+  readonly root: string
+  readonly coreRoot: string
+  readonly studioRoot: string
+  readonly jetbrainsRoot: string
+  readonly technologyBaseline: string
+}
+
+export const createF2Fixture = async (name: string): Promise<F2Fixture> => {
+  const root = await mkdtemp(join(tmpdir(), "gorce-f2-cli-"))
+  try {
+    await fixtureFiles(root, name)
+    const baseline = await readCanonicalYaml(
+      join(root, "gorce/architecture/typescript-bun-baseline.v1.yaml"),
+      TECHNOLOGY_BASELINE_SCHEMA,
+    )
+    return {
+      root,
+      coreRoot: join(root, "gorce"),
+      studioRoot: join(root, "gorce-studio"),
+      jetbrainsRoot: join(root, "gorce-jetbrains"),
+      technologyBaseline: baseline.sha256,
+    }
+  } catch (error: unknown) {
+    await rm(root, { recursive: true, force: true })
+    throw error
+  }
+}
+
 export interface F2VerdictEvidence {
   readonly schema: "gorce.f2-verdict/v1"
   readonly verdict: "APPROVED" | "CHANGES_REQUESTED"
   readonly fixture_manifest_sha256: string
   readonly cases: readonly {
-    readonly kind: "plan" | "runtime-overlay"
+    readonly kind: "plan" | "runtime-overlay" | "published-source-overlay"
     readonly id: string
     readonly expected_code: string
     readonly expected_reason: string
@@ -265,7 +397,7 @@ const expectedFor = (name: string): ExpectedFailure =>
 const runCase = async (
   fixtureRoot: string,
   name: string,
-  kind: "plan" | "runtime-overlay",
+  kind: "plan" | "runtime-overlay" | "published-source-overlay",
 ): Promise<F2VerdictEvidence["cases"][number]> => {
   const expected = expectedFor(name)
   try {
@@ -287,9 +419,11 @@ const runCase = async (
       : errorParts(report)
     const expectedClean = name === "clean"
     const ok = expectedClean
-      ? report.ok && observed.code === expected.code
+      ? report.ok && observed.code === expected.code && observed.reason === expected.reason
       : !report.ok &&
-        report.errors.some((error) => error === `${expected.code}: ${expected.reason}`)
+        report.errors[0] === `${expected.code}: ${expected.reason}` &&
+        observed.code === expected.code &&
+        observed.reason === expected.reason
     return {
       kind,
       id: name,
@@ -346,15 +480,27 @@ export const runF2FixtureManifest = async (
       throw new Error("F2_MANIFEST_SCHEMA: invalid F2 fixture manifest schema")
     const rawCases = manifest.value["cases"]
     const rawRuntimeOverlays = manifest.value["runtime_overlays"]
-    if (!Array.isArray(rawCases) || !Array.isArray(rawRuntimeOverlays))
+    const rawPublishedSourceOverlays = manifest.value["published_source_overlays"]
+    if (
+      !Array.isArray(rawCases) ||
+      !Array.isArray(rawRuntimeOverlays) ||
+      !Array.isArray(rawPublishedSourceOverlays)
+    )
       throw new Error("F2_MANIFEST_CASE_SET: F2 fixture case lists are required")
     const cases = rawCases.filter((item): item is string => typeof item === "string")
     const runtimeOverlays = rawRuntimeOverlays.filter(
       (item): item is string => typeof item === "string",
     )
-    if (!setEquals(cases, planCases) || !setEquals(runtimeOverlays, runtimeOverlayCases)) {
+    const publishedSourceOverlays = rawPublishedSourceOverlays.filter(
+      (item): item is string => typeof item === "string",
+    )
+    if (
+      !setEquals(cases, planCases) ||
+      !setEquals(runtimeOverlays, runtimeOverlayCases) ||
+      !setEquals(publishedSourceOverlays, publishedSourceOverlayCases)
+    ) {
       throw new Error(
-        "F2_MANIFEST_CASE_SET: fixture cases must exactly and uniquely match the approved plan and runtime overlay sets",
+        "F2_MANIFEST_CASE_SET: fixture cases must exactly and uniquely match the approved plan, runtime, and published-source overlay sets",
       )
     }
     for (const name of cases) {
@@ -373,6 +519,14 @@ export const runF2FixtureManifest = async (
         await rm(fixtureRoot, { recursive: true, force: true })
       }
     }
+    for (const name of publishedSourceOverlays) {
+      const fixtureRoot = await mkdtemp(join(tmpdir(), "gorce-f2-"))
+      try {
+        results.push(await runCase(fixtureRoot, name, "published-source-overlay"))
+      } finally {
+        await rm(fixtureRoot, { recursive: true, force: true })
+      }
+    }
     const verdict: F2VerdictEvidence["verdict"] = results.every((item) => item.ok)
       ? "APPROVED"
       : "CHANGES_REQUESTED"
@@ -387,11 +541,14 @@ export const runF2FixtureManifest = async (
     const reason =
       error instanceof Error ? error.message : "F2 fixture execution failed before a stable verdict"
     const separator = reason.indexOf(": ")
-    const code = separator > 0 ? reason.slice(0, separator) : "F2_EXECUTION_ERROR"
+    const parsedCode = separator > 0 ? reason.slice(0, separator) : "F2_EXECUTION_ERROR"
+    const code = parsedCode.startsWith("F2_") ? parsedCode : "F2_MANIFEST_CASE_SET"
     const stableReason =
-      separator > 0
-        ? reason.slice(separator + 2)
-        : "fixture execution failed before a stable verdict"
+      parsedCode === "F2_EXECUTION_ERROR"
+        ? "fixture execution failed before a stable verdict"
+        : separator > 0 && parsedCode.startsWith("F2_")
+          ? reason.slice(separator + 2)
+          : "fixture cases must exactly and uniquely match the approved plan, runtime, and published-source overlay sets"
     await atomicWriteEvidence(evidencePath, {
       schema: "gorce.f2-verdict/v1",
       verdict: "CHANGES_REQUESTED",
