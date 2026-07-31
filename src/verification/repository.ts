@@ -21,6 +21,7 @@ export const SOURCE_MODULE_MAX_LINES = 250
 export const TASK6_VERIFIER_MAX_LINES = 600
 const TASK6_VERIFIER_PATHS = new Set([
   "src/architecture/ecosystem.ts",
+  "src/architecture/ecosystem-structural.ts",
   "src/architecture/semantics.ts",
   "src/architecture/yaml.ts",
   "src/commands/verify-architecture.ts",

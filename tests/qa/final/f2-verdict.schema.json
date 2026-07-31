@@ -10,289 +10,419 @@
     "fixture_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "cases": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "kind",
-          "id",
-          "expected_code",
-          "expected_reason",
-          "observed_code",
-          "observed_reason",
-          "ok",
-          "error_count"
-        ],
-        "properties": {
-          "kind": { "enum": ["plan", "runtime-overlay", "published-source-overlay"] },
-          "id": { "type": "string" },
-          "expected_code": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
-          "expected_reason": { "type": "string", "minLength": 1 },
-          "observed_code": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
-          "observed_reason": { "type": "string", "minLength": 1 },
-          "ok": { "type": "boolean" },
-          "error_count": { "type": "integer", "minimum": 0 }
-        },
-        "oneOf": [
-          {
-            "properties": {
-              "id": { "const": "clean" },
-              "expected_code": { "const": "NONE" },
-              "expected_reason": { "const": "clean sovereign sibling trees are approved" }
-            },
-            "allOf": [
-              {
-                "if": { "properties": { "ok": { "const": true } } },
-                "then": {
-                  "properties": {
-                    "observed_code": { "const": "NONE" },
-                    "observed_reason": { "const": "clean sovereign sibling trees are approved" }
-                  }
-                }
-              }
-            ]
-          },
-          {
-            "properties": {
-              "id": { "const": "package-inversion" },
-              "expected_code": { "const": "ECO_CORE_PACKAGE_INVERSION" },
-              "expected_reason": { "const": "core must not depend on Studio or JetBrains packages" }
-            },
-            "allOf": [
-              {
-                "if": { "properties": { "ok": { "const": true } } },
-                "then": {
-                  "properties": {
-                    "observed_code": { "const": "ECO_CORE_PACKAGE_INVERSION" },
-                    "observed_reason": {
-                      "const": "core must not depend on Studio or JetBrains packages"
-                    }
-                  }
-                }
-              }
-            ]
-          },
-          {
-            "properties": {
-              "id": { "const": "product-inventory-in-core" },
-              "expected_code": { "const": "ECO_CORE_PRODUCT_INVENTORY" },
-              "expected_reason": {
-                "const": "core must not contain Studio or JetBrains production inventory"
-              }
-            },
-            "allOf": [
-              {
-                "if": { "properties": { "ok": { "const": true } } },
-                "then": {
-                  "properties": {
-                    "observed_code": { "const": "ECO_CORE_PRODUCT_INVENTORY" },
-                    "observed_reason": {
-                      "const": "core must not contain Studio or JetBrains production inventory"
-                    }
-                  }
-                }
-              }
-            ]
-          },
-          {
-            "properties": {
-              "id": { "const": "source-tunneling" },
-              "expected_code": { "const": "ECO_SOURCE_TUNNELING" },
-              "expected_reason": {
-                "const": "core must not tunnel to a sibling source tree or unpublished dependency"
-              }
-            },
-            "allOf": [
-              {
-                "if": { "properties": { "ok": { "const": true } } },
-                "then": {
-                  "properties": {
-                    "observed_code": { "const": "ECO_SOURCE_TUNNELING" },
-                    "observed_reason": {
-                      "const": "core must not tunnel to a sibling source tree or unpublished dependency"
-                    }
-                  }
-                }
-              }
-            ]
-          },
-          {
-            "properties": {
-              "id": { "const": "wrong-bun-version" },
-              "expected_code": { "const": "ECO_TECHNOLOGY_VERSION" },
-              "expected_reason": {
-                "const": "Bun 1.3.14, TypeScript 6.0.3, and Biome 2.2.4 are required in core and Studio"
-              }
-            },
-            "allOf": [
-              {
-                "if": { "properties": { "ok": { "const": true } } },
-                "then": {
-                  "properties": {
-                    "observed_code": { "const": "ECO_TECHNOLOGY_VERSION" },
-                    "observed_reason": {
-                      "const": "Bun 1.3.14, TypeScript 6.0.3, and Biome 2.2.4 are required in core and Studio"
-                    }
-                  }
-                }
-              }
-            ]
-          },
-          {
-            "properties": {
-              "id": { "const": "wrong-typescript-version" },
-              "expected_code": { "const": "ECO_TECHNOLOGY_VERSION" },
-              "expected_reason": {
-                "const": "Bun 1.3.14, TypeScript 6.0.3, and Biome 2.2.4 are required in core and Studio"
-              }
-            },
-            "allOf": [
-              {
-                "if": { "properties": { "ok": { "const": true } } },
-                "then": {
-                  "properties": {
-                    "observed_code": { "const": "ECO_TECHNOLOGY_VERSION" },
-                    "observed_reason": {
-                      "const": "Bun 1.3.14, TypeScript 6.0.3, and Biome 2.2.4 are required in core and Studio"
-                    }
-                  }
-                }
-              }
-            ]
-          },
-          {
-            "properties": {
-              "id": { "const": "alternate-package-manager" },
-              "expected_code": { "const": "ECO_ALTERNATE_PACKAGE_MANAGER" },
-              "expected_reason": {
-                "const": "alternate package-manager locks are forbidden: pnpm-lock.yaml"
-              }
-            },
-            "allOf": [
-              {
-                "if": { "properties": { "ok": { "const": true } } },
-                "then": {
-                  "properties": {
-                    "observed_code": { "const": "ECO_ALTERNATE_PACKAGE_MANAGER" },
-                    "observed_reason": {
-                      "const": "alternate package-manager locks are forbidden: pnpm-lock.yaml"
-                    }
-                  }
-                }
-              }
-            ]
-          },
-          {
-            "properties": {
-              "id": { "const": "alternate-core-entrypoint" },
-              "expected_code": { "const": "ECO_ALTERNATE_CORE_ENTRYPOINT" },
-              "expected_reason": {
-                "const": "core must not introduce a Node or non-Bun alternate entrypoint; Bun exports and bin are permitted"
-              }
-            },
-            "allOf": [
-              {
-                "if": { "properties": { "ok": { "const": true } } },
-                "then": {
-                  "properties": {
-                    "observed_code": { "const": "ECO_ALTERNATE_CORE_ENTRYPOINT" },
-                    "observed_reason": {
-                      "const": "core must not introduce a Node or non-Bun alternate entrypoint; Bun exports and bin are permitted"
-                    }
-                  }
-                }
-              }
-            ]
-          },
-          {
-            "properties": {
-              "id": { "const": "jetbrains-host-code-displacement" },
-              "expected_code": { "const": "ECO_JETBRAINS_HOST_DISPLACEMENT" },
-              "expected_reason": {
-                "const": "JetBrains host code must remain in the JetBrains repository"
-              }
-            },
-            "allOf": [
-              {
-                "if": { "properties": { "ok": { "const": true } } },
-                "then": {
-                  "properties": {
-                    "observed_code": { "const": "ECO_JETBRAINS_HOST_DISPLACEMENT" },
-                    "observed_reason": {
-                      "const": "JetBrains host code must remain in the JetBrains repository"
-                    }
-                  }
-                }
-              }
-            ]
-          },
-          {
-            "properties": {
-              "id": {
-                "enum": [
-                  "alternate-cargo-runtime",
-                  "alternate-node-runtime",
-                  "alternate-deno-runtime",
-                  "alternate-non-bun-runtime"
-                ]
-              },
-              "expected_code": { "const": "ECO_NON_BUN_RUNTIME" },
-              "expected_reason": {
-                "const": "core ecosystem trees must use Bun rather than Cargo, Node, Deno, or another runtime"
-              }
-            },
-            "allOf": [
-              {
-                "if": { "properties": { "ok": { "const": true } } },
-                "then": {
-                  "properties": {
-                    "observed_code": { "const": "ECO_NON_BUN_RUNTIME" },
-                    "observed_reason": {
-                      "const": "core ecosystem trees must use Bun rather than Cargo, Node, Deno, or another runtime"
-                    }
-                  }
-                }
-              }
-            ]
-          },
-          {
-            "properties": {
-              "id": {
-                "enum": [
-                  "published-link-source",
-                  "published-file-source",
-                  "published-relative-source",
-                  "published-absolute-source",
-                  "published-git-plus-source",
-                  "published-raw-git-source",
-                  "published-github-shorthand-source",
-                  "published-gradle-files-source",
-                  "published-gradle-project-source"
-                ]
-              },
-              "expected_code": { "const": "ECO_PUBLISHED_SOURCE_TUNNELING" },
-              "expected_reason": {
-                "const": "siblings must consume published immutable artifacts only"
-              }
-            },
-            "allOf": [
-              {
-                "if": { "properties": { "ok": { "const": true } } },
-                "then": {
-                  "properties": {
-                    "observed_code": { "const": "ECO_PUBLISHED_SOURCE_TUNNELING" },
-                    "observed_reason": {
-                      "const": "siblings must consume published immutable artifacts only"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-        ]
-      }
+      "maxItems": 22,
+      "items": { "$ref": "#/$defs/case" }
     },
     "fatal_code": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
     "fatal_reason": { "type": "string", "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "verdict": { "const": "APPROVED" } }, "required": ["verdict"] },
+      "then": { "properties": { "cases": { "$ref": "#/$defs/complete-approved-case-set" } } }
+    },
+    {
+      "if": {
+        "properties": { "verdict": { "const": "CHANGES_REQUESTED" } },
+        "required": ["verdict"]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "cases": { "not": { "$ref": "#/$defs/complete-approved-case-set" } }
+            }
+          },
+          {
+            "properties": {
+              "cases": { "contains": { "not": { "$ref": "#/$defs/approved-case" } } }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id",
+        "expected_code",
+        "expected_reason",
+        "observed_code",
+        "observed_reason",
+        "ok",
+        "error_count"
+      ],
+      "properties": {
+        "kind": { "enum": ["plan", "runtime-overlay", "published-source-overlay"] },
+        "id": { "type": "string" },
+        "expected_code": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+        "expected_reason": { "type": "string", "minLength": 1 },
+        "observed_code": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+        "observed_reason": { "type": "string", "minLength": 1 },
+        "ok": { "type": "boolean" },
+        "error_count": { "type": "integer", "minimum": 0 }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "kind": { "const": "plan" },
+            "id": { "const": "clean" },
+            "expected_code": { "const": "NONE" },
+            "expected_reason": { "const": "clean sovereign sibling trees are approved" }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "plan" },
+            "id": { "const": "package-inversion" },
+            "expected_code": { "const": "ECO_CORE_PACKAGE_INVERSION" },
+            "expected_reason": { "const": "core must not depend on Studio or JetBrains packages" }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "plan" },
+            "id": { "const": "product-inventory-in-core" },
+            "expected_code": { "const": "ECO_CORE_PRODUCT_INVENTORY" },
+            "expected_reason": {
+              "const": "core must not contain Studio or JetBrains production inventory"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "plan" },
+            "id": { "const": "source-tunneling" },
+            "expected_code": { "const": "ECO_SOURCE_TUNNELING" },
+            "expected_reason": {
+              "const": "core must not tunnel to a sibling source tree or unpublished dependency"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "plan" },
+            "id": { "enum": ["wrong-bun-version", "wrong-typescript-version"] },
+            "expected_code": { "const": "ECO_TECHNOLOGY_VERSION" },
+            "expected_reason": {
+              "const": "Bun 1.3.14, TypeScript 6.0.3, and Biome 2.2.4 are required in core and Studio"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "plan" },
+            "id": { "const": "alternate-package-manager" },
+            "expected_code": { "const": "ECO_ALTERNATE_PACKAGE_MANAGER" },
+            "expected_reason": {
+              "const": "alternate package-manager locks are forbidden: pnpm-lock.yaml"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "plan" },
+            "id": { "const": "alternate-core-entrypoint" },
+            "expected_code": { "const": "ECO_ALTERNATE_CORE_ENTRYPOINT" },
+            "expected_reason": {
+              "const": "core must not introduce a Node or non-Bun alternate entrypoint; Bun exports and bin are permitted"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "plan" },
+            "id": { "const": "jetbrains-host-code-displacement" },
+            "expected_code": { "const": "ECO_JETBRAINS_HOST_DISPLACEMENT" },
+            "expected_reason": {
+              "const": "JetBrains host code must remain in the JetBrains repository"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "runtime-overlay" },
+            "id": {
+              "enum": [
+                "alternate-cargo-runtime",
+                "alternate-node-runtime",
+                "alternate-deno-runtime",
+                "alternate-non-bun-runtime"
+              ]
+            },
+            "expected_code": { "const": "ECO_NON_BUN_RUNTIME" },
+            "expected_reason": {
+              "const": "core ecosystem trees must use Bun rather than Cargo, Node, Deno, or another runtime"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "published-source-overlay" },
+            "id": {
+              "enum": [
+                "published-link-source",
+                "published-file-source",
+                "published-relative-source",
+                "published-absolute-source",
+                "published-git-plus-source",
+                "published-raw-git-source",
+                "published-github-shorthand-source",
+                "published-gradle-files-source",
+                "published-gradle-project-source"
+              ]
+            },
+            "expected_code": { "const": "ECO_PUBLISHED_SOURCE_TUNNELING" },
+            "expected_reason": {
+              "const": "siblings must consume published immutable artifacts only"
+            }
+          }
+        }
+      ]
+    },
+    "approved-case": {
+      "allOf": [
+        { "$ref": "#/$defs/case" },
+        { "properties": { "ok": { "const": true } } },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "id": { "const": "clean" },
+                "observed_code": { "const": "NONE" },
+                "observed_reason": { "const": "clean sovereign sibling trees are approved" }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "package-inversion" },
+                "observed_code": { "const": "ECO_CORE_PACKAGE_INVERSION" },
+                "observed_reason": {
+                  "const": "core must not depend on Studio or JetBrains packages"
+                }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "product-inventory-in-core" },
+                "observed_code": { "const": "ECO_CORE_PRODUCT_INVENTORY" },
+                "observed_reason": {
+                  "const": "core must not contain Studio or JetBrains production inventory"
+                }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "source-tunneling" },
+                "observed_code": { "const": "ECO_SOURCE_TUNNELING" },
+                "observed_reason": {
+                  "const": "core must not tunnel to a sibling source tree or unpublished dependency"
+                }
+              }
+            },
+            {
+              "properties": {
+                "id": { "enum": ["wrong-bun-version", "wrong-typescript-version"] },
+                "observed_code": { "const": "ECO_TECHNOLOGY_VERSION" },
+                "observed_reason": {
+                  "const": "Bun 1.3.14, TypeScript 6.0.3, and Biome 2.2.4 are required in core and Studio"
+                }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "alternate-package-manager" },
+                "observed_code": { "const": "ECO_ALTERNATE_PACKAGE_MANAGER" },
+                "observed_reason": {
+                  "const": "alternate package-manager locks are forbidden: pnpm-lock.yaml"
+                }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "alternate-core-entrypoint" },
+                "observed_code": { "const": "ECO_ALTERNATE_CORE_ENTRYPOINT" },
+                "observed_reason": {
+                  "const": "core must not introduce a Node or non-Bun alternate entrypoint; Bun exports and bin are permitted"
+                }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "jetbrains-host-code-displacement" },
+                "observed_code": { "const": "ECO_JETBRAINS_HOST_DISPLACEMENT" },
+                "observed_reason": {
+                  "const": "JetBrains host code must remain in the JetBrains repository"
+                }
+              }
+            },
+            {
+              "properties": {
+                "id": {
+                  "enum": [
+                    "alternate-cargo-runtime",
+                    "alternate-node-runtime",
+                    "alternate-deno-runtime",
+                    "alternate-non-bun-runtime"
+                  ]
+                },
+                "observed_code": { "const": "ECO_NON_BUN_RUNTIME" },
+                "observed_reason": {
+                  "const": "core ecosystem trees must use Bun rather than Cargo, Node, Deno, or another runtime"
+                }
+              }
+            },
+            {
+              "properties": {
+                "id": {
+                  "enum": [
+                    "published-link-source",
+                    "published-file-source",
+                    "published-relative-source",
+                    "published-absolute-source",
+                    "published-git-plus-source",
+                    "published-raw-git-source",
+                    "published-github-shorthand-source",
+                    "published-gradle-files-source",
+                    "published-gradle-project-source"
+                  ]
+                },
+                "observed_code": { "const": "ECO_PUBLISHED_SOURCE_TUNNELING" },
+                "observed_reason": {
+                  "const": "siblings must consume published immutable artifacts only"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "complete-case-set": {
+      "type": "array",
+      "minItems": 22,
+      "maxItems": 22,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/case" },
+      "contains": { "properties": { "id": { "const": "clean" } } },
+      "minContains": 1,
+      "maxContains": 1,
+      "allOf": [
+        {
+          "contains": { "properties": { "id": { "const": "package-inversion" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "product-inventory-in-core" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "source-tunneling" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "wrong-bun-version" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "wrong-typescript-version" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "alternate-package-manager" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "alternate-core-entrypoint" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "jetbrains-host-code-displacement" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "alternate-cargo-runtime" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "alternate-node-runtime" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "alternate-deno-runtime" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "alternate-non-bun-runtime" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "published-link-source" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "published-file-source" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "published-relative-source" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "published-absolute-source" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "published-git-plus-source" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "published-raw-git-source" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "published-github-shorthand-source" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "published-gradle-files-source" } } },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "properties": { "id": { "const": "published-gradle-project-source" } } },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
+    },
+    "complete-approved-case-set": {
+      "allOf": [
+        { "$ref": "#/$defs/complete-case-set" },
+        { "items": { "$ref": "#/$defs/approved-case" } }
+      ]
+    }
   }
 }
