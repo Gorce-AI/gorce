@@ -36,7 +36,7 @@ export interface VerificationReport {
   readonly schema: "gorce.verification-result/v1"
   readonly command: string
   readonly ok: boolean
-  readonly verdict?: "APPROVED" | "CHANGES_REQUESTED"
+  readonly verdict?: "APPROVED" | "CHANGES_REQUESTED" | "NOT_APPLICABLE"
   readonly checks: readonly CheckResult[]
   readonly errors: readonly string[]
 }

@@ -1,3 +1,5 @@
+// biome-ignore-all lint/complexity/useLiteralKeys: Canonical manifest keys are validated explicitly.
+
 import { readFile, readdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { emit, failed, flag, parseStrictCli, type StrictCliSpec } from "./cli.js"

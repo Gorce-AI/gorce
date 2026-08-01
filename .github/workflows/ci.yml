@@ -1,4 +1,4 @@
-name: CI
+name: S1 Bun CI
 
 on:
   push:
@@ -9,66 +9,114 @@ permissions:
   contents: read
 
 jobs:
-  checks:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Check workspace
-        run: cargo check --workspace --locked
-      - name: Run tests
-        run: cargo test --workspace --locked
-      - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-  bun-task-6:
+  quality:
+    name: Bun quality and S1 acceptance
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up pinned Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
       - name: Install frozen dependencies
         run: bun install --frozen-lockfile
-      - name: Verify technology baseline
-        run: bun run verify:technology -- --bun=1.3.14 --typescript=6.0.3 --strict
-      - name: Verify architecture rules
-        run: bun run verify:architecture -- --strict
-      - name: Run Biome lint
-        run: bun run lint
-      - name: Run TypeScript typecheck
-        run: bun run typecheck
-      - name: Prepare Task 6 evidence directory
-        run: mkdir -p "$RUNNER_TEMP/gorce-evidence"
-      - name: Hash canonical architecture rules
+      - name: Verify technology and architecture
         run: |
-          bun run architecture:hash-rules -- \
-            --technology=architecture/typescript-bun-baseline.v1.yaml \
-            --studio=architecture/studio-host-gate.v1.yaml \
-            --evidence="$RUNNER_TEMP/gorce-evidence/task-06-rule-digests.json"
-      - name: Hash canonical architecture rules again
+          bun run verify:technology -- --bun=1.3.14 --typescript=6.0.3 --strict
+          bun run verify:architecture -- --strict
+          bun run verify:s1-cutover -- --evidence="$RUNNER_TEMP/s1-cutover.json"
+      - name: Run quality checks
         run: |
-          bun run architecture:hash-rules -- \
-            --technology=architecture/typescript-bun-baseline.v1.yaml \
-            --studio=architecture/studio-host-gate.v1.yaml \
-            --evidence="$RUNNER_TEMP/gorce-evidence/task-06-rule-digests-again.json"
-          cmp -- "$RUNNER_TEMP/gorce-evidence/task-06-rule-digests.json" "$RUNNER_TEMP/gorce-evidence/task-06-rule-digests-again.json"
+          bun run lint
+          bun run typecheck
+          bun test
+          bun run docs:verify
+          bun run test:mutation -- --evidence="$RUNNER_TEMP/gorce-mutation.json"
       - name: Run exact F2 fixture QA
-        run: bun run qa:task -- --task=F2 --all --fixture=tests/qa/final/f2-architecture.yaml --evidence="$RUNNER_TEMP/gorce-evidence/final-architecture.json"
-      - name: Run Task 6 tests
-        run: bun test
-      - name: Upload Task 6 evidence
-        if: always()
+        run: bun run qa:task -- --task=F2 --all --fixture=tests/qa/final/f2-architecture.yaml --evidence="$RUNNER_TEMP/gorce-f2.json"
+      - name: Verify reproducible Linux build
+        run: bun run verify:reproducible -- --target=bun-linux-x64 --evidence="$RUNNER_TEMP/gorce-reproducibility.json"
+      - name: Upload quality evidence
         uses: actions/upload-artifact@v4
         with:
-          name: task-6-evidence
-          path: ${{ runner.temp }}/gorce-evidence
+          name: s1-quality-evidence
+          path: |
+            ${{ runner.temp }}/s1-cutover.json
+            ${{ runner.temp }}/gorce-f2.json
+            ${{ runner.temp }}/gorce-reproducibility.json
+            ${{ runner.temp }}/gorce-mutation.json
           if-no-files-found: error
+          retention-days: 14
+
+  native-hello:
+    name: Native hello (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+            target: bun-linux-x64
+            suffix: ""
+          - name: macos-arm64
+            os: macos-14
+            target: bun-darwin-arm64
+            suffix: ""
+          - name: windows-x64
+            os: windows-2022
+            target: bun-windows-x64
+            suffix: ".exe"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up pinned Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile
+      - name: Build native hello
+        run: bun run build:native -- --target=${{ matrix.target }} --outfile=${{ runner.temp }}/gorce-tui-harness${{ matrix.suffix }} --evidence=${{ runner.temp }}/build-${{ matrix.name }}.json
+      - name: Execute copied native hello
+        run: bun run verify:native -- --target=${{ matrix.target }} --builder-bun=1.3.14 --artifact=${{ runner.temp }}/gorce-tui-harness${{ matrix.suffix }} --evidence=${{ runner.temp }}/hello-${{ matrix.name }}.json
+      - name: Upload native evidence and artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: s1-native-${{ matrix.name }}
+          path: |
+            ${{ runner.temp }}/build-${{ matrix.name }}.json
+            ${{ runner.temp }}/hello-${{ matrix.name }}.json
+            ${{ runner.temp }}/gorce-tui-harness${{ matrix.suffix }}
+          if-no-files-found: error
+          retention-days: 14
+
+  native-aggregate:
+    name: Native hello aggregate
+    needs: [quality, native-hello]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up pinned Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile
+      - name: Download native evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: s1-native-*
+          path: ${{ runner.temp }}/native
+          merge-multiple: true
+      - name: Index native evidence
+        run: bun run verify:native:index -- --input=${{ runner.temp }}/native --output=${{ runner.temp }}/native-index.json
+      - name: Upload native index
+        uses: actions/upload-artifact@v4
+        with:
+          name: s1-native-aggregate
+          path: ${{ runner.temp }}/native-index.json
+          if-no-files-found: error
+          retention-days: 14

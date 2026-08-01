@@ -6,23 +6,21 @@ TypeScript 6.0.3, Biome 2.2.4, ESM, compiler policy, required commands, and
 native validation targets. `studio-host-gate.v1.yaml` is only the normative
 Task-31 extension-versus-fork decision procedure; it is not an evaluation.
 
-The core target is a TypeScript/Bun workspace. Task 6 intentionally adds only
-the foundation rules, verifiers, and hermetic F2 fixtures. The future
-`apps/`, `packages/`, `contracts/`, and other product build graph are not
-materialized by this task.
+The core target is now the approved S1 TypeScript/Bun workspace. Its exact
+private workspace graph is `packages/core` -> `packages/tui-harness` ->
+`apps/tui-harness`; the only executable product artifact is the argument-free
+`gorce-tui-harness` Bun-compiled hello artifact. S1 is a platform cutover and
+packaging spike, not a terminal-regression product, semantic core, or
+operational TUI.
 
-## Transitional scaffold
+## S1 boundary
 
-The Rust crates currently present are a temporary Rust scaffold inherited from
-repository bootstrap. They are superseded by the TypeScript/Bun target and are
-not final compliance. They remain untouched so the existing Rust CI `checks`
-job can continue to validate the scaffold while the TypeScript foundation is
-introduced in parallel.
-
-Only the Task-6 repository-rule verifier tolerates that transitional scaffold.
-The ecosystem verifier is stricter: published sibling trees must be clean Git
-repositories with the documented identities and contain no Cargo, Node, Deno,
-or other non-Bun runtime or entrypoint.
+Cargo, Rust, xtask, the daemon OpenAPI placeholder, and placeholder release
+automation are retired from the active tree. CI and security use Bun only.
+The historical Task-6 verifier still retains Cargo-negative F2 fixtures and
+structural detection so those negative tests remain evidence, not production
+toolchain claims. S1 does not introduce commands, events, sessions, work runs,
+storage, rendering, input, daemon, transport, providers, or satellite code.
 
 ## Ownership and isolation
 

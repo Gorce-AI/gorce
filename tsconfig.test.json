@@ -7,6 +7,5 @@
     "declarationMap": true,
     "emitDeclarationOnly": true
   },
-  "references": [{ "path": "./tsconfig.source.json" }],
-  "include": ["tests/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

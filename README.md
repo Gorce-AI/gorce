@@ -1,26 +1,25 @@
 # Gorce
 
-Gorce is a local-first service with a TypeScript/Bun core target. This
-repository is the v0.1 bootstrap scaffold; the currently checked-in Rust
-crates are temporary and are not final architecture compliance.
+Gorce Core is the S1 TypeScript/Bun core-first preview workspace. S1 provides
+the private core/TUI-harness graph and a deterministic native hello artifact;
+semantic core and operational TUI work are explicitly deferred.
 
 ## Repository layout
 
 - `architecture/` — canonical technology baseline and Studio host decision rule.
-- `src/` — TypeScript verification and execution tooling.
-- `crates/` — temporary Rust scaffold retained for the existing CI checks job.
-- `api/` — OpenAPI and JSON Schema placeholders.
+- `src/` — TypeScript verification, cutover, and packaging tooling.
+- `packages/core/` — private TypeScript core package.
+- `packages/tui-harness/` — private reusable hello harness package.
+- `apps/tui-harness/` — private argument-free Bun executable app.
 - `docs/` — architecture, operations, security, and decision records.
-- `xtask/` — repository maintenance command skeleton.
 
-See `docs/architecture.md` for the authoritative TypeScript/Bun target and
-sovereign sibling-repository boundaries. Task 6 does not create the future
-application/package workspace graph.
+See `docs/architecture.md` for the authoritative S1 TypeScript/Bun boundary.
 
 ## Status
 
-This is a public-ready scaffold, not a usable runtime. APIs, storage behavior,
-authentication, and operational commands will be added in later milestones.
+S1 is a development core-first packaging preview. It makes no terminal
+regression, release, candidate, daemon, storage, provider, or operational-TUI
+claim.
 
 ## Development
 
@@ -30,15 +29,22 @@ The foundation gate uses Bun 1.3.14, TypeScript 6.0.3, and Biome 2.2.4:
 bun install --frozen-lockfile
 bun run verify:technology -- --bun=1.3.14 --typescript=6.0.3 --strict
 bun run verify:architecture -- --strict
+mkdir -p "$RUNNER_TEMP/gorce-s1-evidence/native"
+bun run verify:s1-cutover -- --evidence="$RUNNER_TEMP/gorce-s1-evidence/cutover.json"
+bun run build:native -- --target=bun-darwin-arm64 --outfile="$RUNNER_TEMP/gorce-s1-evidence/native/gorce-tui-harness" --evidence="$RUNNER_TEMP/gorce-s1-evidence/native/build.json"
+bun run verify:native -- --target=bun-darwin-arm64 --builder-bun=1.3.14 --artifact="$RUNNER_TEMP/gorce-s1-evidence/native/gorce-tui-harness" --evidence="$RUNNER_TEMP/gorce-s1-evidence/native/hello.json"
+bun run verify:reproducible -- --target=bun-darwin-arm64 --evidence="$RUNNER_TEMP/gorce-s1-evidence/reproducibility.json"
+bun run verify:native:index -- --input="$RUNNER_TEMP/gorce-s1-evidence/native" --output="$RUNNER_TEMP/gorce-s1-evidence/native-index.json"
+bun run test:mutation
 ```
 
-The Rust commands validate only the temporary scaffold:
+The active S1 quality gate is Bun-only:
 
 ```text
-cargo fmt --all -- --check
-cargo check --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+bun run lint
+bun run typecheck
+bun test
+bun run audit
 ```
 
 See `CONTRIBUTING.md` and `docs/development.md` for contribution and workflow
@@ -58,10 +64,10 @@ bun run verify:plan-compliance
 bun run docs:verify
 ```
 
-All command output is human-readable by default and supports `--json`. The
-bootstrap verifier validates the detached Ed25519 signature, the approved plan
-binding, the complete blocker graph, command ownership, repository license,
-private-artifact exclusions, and source-module limits.
+All command output is human-readable by default and supports `--json`. S1
+verification emits fail-closed cutover, native-hello, reproducibility, and
+native-evidence-index JSON. Cross-built binaries are never treated as native
+validation; native evidence records the runner OS and architecture.
 
 ## License
 

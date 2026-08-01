@@ -1,4 +1,10 @@
 {
   "files": [],
-  "references": [{ "path": "./tsconfig.source.json" }, { "path": "./tsconfig.test.json" }]
+  "references": [
+    { "path": "./tsconfig.source.json" },
+    { "path": "./tsconfig.test.json" },
+    { "path": "./packages/core" },
+    { "path": "./packages/tui-harness" },
+    { "path": "./apps/tui-harness" }
+  ]
 }

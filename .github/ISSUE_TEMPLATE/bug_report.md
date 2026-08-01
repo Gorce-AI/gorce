@@ -22,7 +22,7 @@ What did you expect to happen?
 
 - Gorce version or commit:
 - Operating system:
-- Rust version, if relevant:
+- Bun version, if relevant:
 
 ## Additional context
 

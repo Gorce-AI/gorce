@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.ai/schemas/s1-mutation-gate.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "verdict",
+    "baseline_sha256",
+    "command",
+    "critical_target_categories",
+    "production_inventory",
+    "production_source_digests",
+    "targets",
+    "score",
+    "runner",
+    "coverage_claim",
+    "reason"
+  ],
+  "properties": {
+    "schema": { "const": "gorce.s1.mutation-gate/v1" },
+    "verdict": { "const": "NOT_APPLICABLE" },
+    "baseline_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "command": { "const": "bun run test:mutation" },
+    "critical_target_categories": {
+      "const": ["reducers", "policy", "compatibility", "persistence", "reconciliation"]
+    },
+    "production_inventory": {
+      "const": [
+        "apps/tui-harness/src/main.ts",
+        "packages/core/src/index.ts",
+        "packages/tui-harness/src/index.ts"
+      ]
+    },
+    "production_source_digests": {
+      "const": {
+        "apps/tui-harness/src/main.ts": "29c53d27381512c86e8be1cecaac20c0b8d0040eddfc61b05db1601c05b2ea71",
+        "packages/core/src/index.ts": "49bf731dd3c0a7d53c074e02f8304eb62d07536dbfa680a43ab2748f53711695",
+        "packages/tui-harness/src/index.ts": "2f90c0b1e80f6a5d85cd7e15745c32c8015518a26817057b15d12846e6956920"
+      }
+    },
+    "targets": { "const": [] },
+    "score": { "const": null },
+    "runner": { "const": null },
+    "coverage_claim": { "const": null },
+    "reason": { "const": "S1_NO_CRITICAL_MUTATION_TARGETS" }
+  }
+}

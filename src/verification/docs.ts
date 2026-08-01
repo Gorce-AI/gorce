@@ -7,6 +7,11 @@ const requiredDocuments = [
   "LICENSE",
   "docs/development.md",
   "docs/execution-tooling.md",
+  "docs/architecture.md",
+  "docs/adr/0001-daemon-boundary.md",
+  "docs/adr/0002-filesystem-first-storage.md",
+  "docs/adr/0003-repository-topology.md",
+  "docs/adr/0004-s1-cutover.md",
 ] as const
 
 export const verifyDocs = (root: string): VerificationReport => {
@@ -25,9 +30,18 @@ export const verifyDocs = (root: string): VerificationReport => {
   const toolingPath = join(root, "docs/execution-tooling.md")
   if (existsSync(toolingPath)) {
     const text = readFileSync(toolingPath, "utf8")
-    const complete = ["verify:bootstrap", "qa:task", "verify:plan-compliance", "docs:verify"].every(
-      (term) => text.includes(term),
-    )
+    const complete = [
+      "verify:bootstrap",
+      "qa:task",
+      "verify:plan-compliance",
+      "docs:verify",
+      "verify:s1-cutover",
+      "test:mutation",
+      "build:native",
+      "verify:native",
+      "verify:reproducible",
+      "bun audit",
+    ].every((term) => text.includes(term))
     checks.push({
       name: "tooling-documentation",
       status: complete ? "passed" : "failed",
