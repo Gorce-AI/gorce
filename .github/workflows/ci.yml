@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   quality:
-    name: Bun quality and S1 acceptance
+    name: checks
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
