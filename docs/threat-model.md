@@ -1,31 +1,27 @@
 # Threat model
 
-## Assets
+## S1 assets
 
-- User data in the storage root.
-- Credentials and local API authorization material.
-- Integrity of the storage format and indexes.
-- Release artifacts and source supply chain.
+- Integrity of the private workspace graph and canonical architecture bytes.
+- Native hello artifacts and their reproducibility/native-runner evidence.
+- Dependency and build-tool supply-chain inputs.
 
-## Trust boundaries
+## S1 trust boundaries
 
-- The daemon process and its configured filesystem root.
-- Local API clients and any explicitly enabled remote clients.
-- Agent operations crossing from API input into storage.
-- Build and release automation.
+- Workspace package imports must flow app -> harness -> core.
+- Native artifacts are copied outside the source tree before execution.
+- CI and local verification use the pinned Bun toolchain only.
 
-## Threats
+## S1 threats
 
-- A local or remote unauthorized client reads or changes data.
-- Path traversal or symlink handling escapes the storage root.
-- Crash recovery loses, duplicates, or partially publishes a record.
-- A compromised dependency or release workflow ships malicious code.
-- Sensitive data leaks through logs, diagnostics, or backups.
+- A package imports outside the approved workspace direction.
+- A cross-built artifact is incorrectly reported as native execution.
+- Non-reproducible compilation or an altered canonical rule is accepted.
+- A compromised dependency or build tool enters the workspace.
 
 ## Mitigations and gaps
 
-Least privilege, local-by-default exposure, canonical paths, atomic commits,
-checksums, rebuildable indexes, dependency auditing, and redacted logging are
-planned mitigations. Authentication, authorization, format implementation,
-and operational hardening are open work and must be reviewed before runtime
-release.
+The S1 cutover verifier, no-emit project-reference check, copied-outside-source
+runner, paired SHA-256 build check, native evidence index, frozen install, and
+Bun audit are the active mitigations. Runtime authentication, storage, daemon,
+transport, provider, and release hardening are outside S1.

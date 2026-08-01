@@ -1,13 +1,14 @@
 # Changelog
 
-All notable changes to Gorce will be documented here.
+S1 development evidence is recorded here for traceability; this file is not a
+release or candidate declaration.
 
 The format follows the principles of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow Semantic Versioning where applicable.
 
-## [Unreleased]
+## S1 development preview
 
 ### Added
 
-- Initial bootstrap scaffold for the TypeScript/Bun core target.
-- API placeholders, architecture documentation, and repository governance files.
+- Private TypeScript/Bun core-first workspace graph.
+- Deterministic native hello and reproducibility evidence tooling.

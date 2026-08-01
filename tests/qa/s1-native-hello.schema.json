@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.ai/schemas/s1-native-hello.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "target",
+    "source_commit",
+    "task6_baseline_sha256",
+    "builder_bun",
+    "release_claim",
+    "scope",
+    "runner_os",
+    "runner_arch",
+    "artifact",
+    "artifact_sha256",
+    "copied_outside_source",
+    "exit_code",
+    "stderr",
+    "stdout",
+    "payload",
+    "native_execution"
+  ],
+  "properties": {
+    "schema": { "const": "gorce.s1.native-hello/v1" },
+    "target": { "type": "string", "pattern": "^bun-(linux|darwin|windows)-(x64|arm64)$" },
+    "source_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "task6_baseline_sha256": {
+      "const": "67b95cadb3ec9a711992007d2df420d984d97cfb9da94b033567e9b7987365a2"
+    },
+    "builder_bun": { "const": "1.3.14" },
+    "release_claim": { "const": false },
+    "scope": { "const": "S1 native validation only; not release qualified" },
+    "runner_os": { "enum": ["linux", "darwin", "win32"] },
+    "runner_arch": { "enum": ["x64", "arm64"] },
+    "artifact": { "type": "string", "minLength": 1 },
+    "artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "copied_outside_source": { "const": true },
+    "exit_code": { "const": 0 },
+    "stderr": { "const": "" },
+    "stdout": { "type": "string", "minLength": 1 },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "hello", "package", "core", "ok"],
+      "properties": {
+        "schema": { "const": "gorce.s1.hello/v1" },
+        "hello": { "const": "gorce-tui-harness" },
+        "package": { "const": "@gorce-ai/tui-harness" },
+        "core": { "const": "@gorce-ai/core" },
+        "ok": { "const": true }
+      }
+    },
+    "native_execution": { "const": true }
+  }
+}

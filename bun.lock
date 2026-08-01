@@ -10,6 +10,27 @@
         "typescript": "6.0.3",
       },
     },
+    "apps/tui-harness": {
+      "name": "@gorce-ai/gorce-tui-harness",
+      "version": "0.0.0",
+      "bin": {
+        "gorce-tui-harness": "./src/main.ts",
+      },
+      "dependencies": {
+        "@gorce-ai/tui-harness": "workspace:*",
+      },
+    },
+    "packages/core": {
+      "name": "@gorce-ai/core",
+      "version": "0.0.0",
+    },
+    "packages/tui-harness": {
+      "name": "@gorce-ai/tui-harness",
+      "version": "0.0.0",
+      "dependencies": {
+        "@gorce-ai/core": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@biomejs/biome": ["@biomejs/biome@2.2.4", "", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.2.4", "@biomejs/cli-darwin-x64": "2.2.4", "@biomejs/cli-linux-arm64": "2.2.4", "@biomejs/cli-linux-arm64-musl": "2.2.4", "@biomejs/cli-linux-x64": "2.2.4", "@biomejs/cli-linux-x64-musl": "2.2.4", "@biomejs/cli-win32-arm64": "2.2.4", "@biomejs/cli-win32-x64": "2.2.4" }, "bin": { "biome": "bin/biome" } }, "sha512-TBHU5bUy/Ok6m8c0y3pZiuO/BZoY/OcGxoLlrfQof5s8ISVwbVBdFINPQZyFfKwil8XibYWb7JMwnT8wT4WVPg=="],
@@ -29,6 +50,12 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.2.4", "", { "os": "win32", "cpu": "arm64" }, "sha512-NXnfTeKHDFUWfxAefa57DiGmu9VyKi0cDqFpdI+1hJWQjGJhJutHPX0b5m+eXvTKOaf+brU+P0JrQAZMb5yYaQ=="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.2.4", "", { "os": "win32", "cpu": "x64" }, "sha512-3Y4V4zVRarVh/B/eSHczR4LYoSVyv3Dfuvm3cWs5w/HScccS0+Wt/lHOcDTRYeHjQmMYVC3rIRWqyN2EI52+zg=="],
+
+    "@gorce-ai/core": ["@gorce-ai/core@workspace:packages/core"],
+
+    "@gorce-ai/gorce-tui-harness": ["@gorce-ai/gorce-tui-harness@workspace:apps/tui-harness"],
+
+    "@gorce-ai/tui-harness": ["@gorce-ai/tui-harness@workspace:packages/tui-harness"],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 

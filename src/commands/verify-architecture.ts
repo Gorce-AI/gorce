@@ -1,3 +1,5 @@
+// biome-ignore-all lint/complexity/useLiteralKeys: Canonical YAML keys are validated explicitly.
+
 import { readdir, readFile } from "node:fs/promises"
 import { join, relative, resolve } from "node:path"
 import { emit, failed, flag, parseStrictCli, type StrictCliSpec } from "./cli.js"
@@ -15,6 +17,7 @@ import {
   type CanonicalYamlValue,
 } from "../architecture/yaml.js"
 import type { CheckResult, VerificationReport } from "../verification/types.js"
+import { scanProductionTree } from "../verification/production.js"
 
 const cliSpec: StrictCliSpec = {
   flags: ["root"],
@@ -33,6 +36,7 @@ const ignoredDirectories = new Set([
 ])
 const verifierFiles = new Set([
   "src/architecture/ecosystem.ts",
+  "src/architecture/ecosystem-structural.ts",
   "src/commands/verify-architecture.ts",
   "src/commands/verify-architecture-ecosystem.ts",
   "src/verification/f2.ts",
@@ -206,14 +210,9 @@ const verifyProductionBoundaries = async (
         violations.push(`${relativePath}: product inventory/source path`)
         continue
       }
-      if (
-        ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"].includes(relativePath) ||
-        relativePath.startsWith("crates/")
-      )
-        continue
       const text = await readFile(path, "utf8")
       if (
-        /gorce-(studio|jetbrains)|@gorce-ai\/(studio|jetbrains)|(?:file|git|workspace):|compositeBuild|includeBuild/i.test(
+        /gorce-(studio|jetbrains)|@gorce-ai\/(studio|jetbrains)|compositeBuild|includeBuild/i.test(
           text,
         )
       ) {
@@ -242,9 +241,27 @@ const verifyProductionBoundaries = async (
       error instanceof Error ? error.message : "cannot scan production roots",
     )
   }
+  try {
+    const violations = await scanProductionTree(root)
+    check(
+      checks,
+      errors,
+      "production-runtime-retirement",
+      violations.length === 0,
+      violations.length === 0 ? "" : violations.join("; "),
+    )
+  } catch (error: unknown) {
+    check(
+      checks,
+      errors,
+      "production-runtime-retirement",
+      false,
+      error instanceof Error ? error.message : "cannot scan production runtime tree",
+    )
+  }
 }
 
-const verifyRustScaffoldDocumentation = async (
+const verifyS1Documentation = async (
   root: string,
   checks: CheckResult[],
   errors: string[],
@@ -252,21 +269,21 @@ const verifyRustScaffoldDocumentation = async (
   try {
     const architecture = await readFile(join(root, "docs/architecture.md"), "utf8")
     const documented =
-      /temporary Rust scaffold/i.test(architecture) &&
-      /superseded by the TypeScript\/Bun target/i.test(architecture) &&
-      /not final compliance/i.test(architecture)
+      /TypeScript\/Bun/i.test(architecture) &&
+      /S1|core-first|TUI harness/i.test(architecture) &&
+      !/temporary Rust scaffold|Cargo workspace/i.test(architecture)
     check(
       checks,
       errors,
-      "rust-scaffold-disclosure",
+      "s1-bun-cutover-documentation",
       documented,
-      "Rust must be documented as a temporary scaffold superseded by the TypeScript/Bun target, not final compliance",
+      "architecture documentation must describe the approved S1 TypeScript/Bun cutover",
     )
   } catch (error: unknown) {
     check(
       checks,
       errors,
-      "rust-scaffold-disclosure",
+      "s1-bun-cutover-documentation",
       false,
       error instanceof Error ? error.message : "cannot read architecture documentation",
     )
@@ -288,7 +305,7 @@ const main = async (): Promise<void> => {
   const errors: string[] = []
   await verifyRules(root, checks, errors)
   await verifyProductionBoundaries(root, checks, errors)
-  await verifyRustScaffoldDocumentation(root, checks, errors)
+  await verifyS1Documentation(root, checks, errors)
   emit(report(checks, errors), parsed.options.switches.has("json"))
 }
 

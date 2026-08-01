@@ -1,0 +1,12 @@
+{
+  "name": "@gorce-ai/gorce-tui-harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@gorce-ai/tui-harness": "workspace:*"
+  },
+  "bin": {
+    "gorce-tui-harness": "./src/main.ts"
+  }
+}
