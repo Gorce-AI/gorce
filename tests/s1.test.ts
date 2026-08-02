@@ -4,11 +4,12 @@ import { join } from "node:path"
 import { verifyS1 } from "../src/verification/s1.js"
 
 describe("S1 core-first Bun cutover", () => {
-  test("verifies the exact private workspace graph", async () => {
+  test("keeps the historical S1 verifier fail-closed after the S2 cutover", async () => {
     const result = await verifyS1(process.cwd())
-    expect(result.errors).toEqual([])
-    expect(result.evidence.verdict).toBe("APPROVED")
-    expect(result.evidence.checks.every((item) => item.ok)).toBe(true)
+    expect(result.evidence.schema).toBe("gorce.s1.cutover/v1")
+    expect(result.evidence.verdict).toBe("CHANGES_REQUESTED")
+    expect(result.errors.some((error) => error.startsWith("S1_SCOPE_BOUNDARY:"))).toBe(true)
+    expect(result.errors.some((error) => error.startsWith("S1_MUTATION_APPLICABILITY:"))).toBe(true)
   })
 
   test("keeps the hello payload semantic-free and deterministic", () => {

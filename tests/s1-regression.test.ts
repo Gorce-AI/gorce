@@ -164,7 +164,7 @@ describe("S1 Oracle blocker regressions", () => {
     expect(copiedArtifactPath("external-gorce-native", "bun-windows-x64")).toEndWith(".exe")
   })
 
-  test("binds the N/A mutation gate to the exact inventory and current baseline", async () => {
+  test("preserves the historical N/A mutation evidence and invalidates it after S2", async () => {
     const evidence = mutationEvidence(process.cwd())
     expect(
       await schemaErrors(
@@ -190,7 +190,7 @@ describe("S1 Oracle blocker regressions", () => {
         await mkdir(dirname(destination), { recursive: true })
         await copyFile(path, destination)
       }
-      expect((await inspectMutationApplicability(root)).applicable).toBe(true)
+      expect((await inspectMutationApplicability(root)).applicable).toBe(false)
       for (const behavior of [
         "policy compatibility",
         "commands events effects",

@@ -1,15 +1,27 @@
 # Execution tooling
 
-This repository contains strict S1 verification and native-packaging tooling,
-not a production runtime. The tooling is typed TypeScript executed by Bun
-1.3.14 and built with the pinned compiler and linter versions in `package.json`.
+This repository contains strict S2 semantic-core verification and historical S1
+native-packaging tooling, not a production runtime. The tooling is typed
+TypeScript executed by Bun 1.3.14 and built with the pinned compiler and linter
+versions in `package.json`.
+
+The S2 semantic authority is `@gorce-ai/core`: immutable Session and WorkRun
+events, replay, expected-version conflict handling, and this effect lifecycle:
+
+```text
+planned -> attempted -> confirmed | failed | unknown -> reconciled | compensated
+```
+
+Result affinity checks 13 independent fields covering roots, targets, execution,
+streams, digests, and workspace revision. Durable storage is S3 scope; TUI,
+terminal, renderer, and input behavior are S4 scope.
 
 Task 6 freezes the public architecture rules and their digests:
 
 - `bun run verify:technology -- --bun=1.3.14 --typescript=6.0.3 --strict`
 - `bun run verify:architecture -- --strict`
-- `bun run verify:s1-cutover -- --evidence="$RUNNER_TEMP/gorce-s1-evidence/cutover.json"` (`verify:s1` is a compatible alias)
-- `bun run test:mutation` emits the schema-validated S1 `NOT_APPLICABLE` gate record.
+- `bun run verify:s2 -- --evidence="$RUNNER_TEMP/gorce-s2-evidence/semantic-core.json"` emits the S2 semantic-core evidence record.
+- `bun run test:mutation -- --evidence="$RUNNER_TEMP/gorce-s2-evidence/mutation.json"` runs real mutations against the S2 semantic-law tests and requires at least 90% killed targets.
 - `bun run typecheck` (no-emit project-reference graph)
 - `bun run build:native -- --target=<target> --outfile="$RUNNER_TEMP/gorce-s1-evidence/native/<artifact>" --evidence="$RUNNER_TEMP/gorce-s1-evidence/native/build.json"` and `bun run verify:native -- --target=<target> --builder-bun=1.3.14 --artifact="$RUNNER_TEMP/gorce-s1-evidence/native/<artifact>" --evidence="$RUNNER_TEMP/gorce-s1-evidence/native/hello.json"`
 - `bun run verify:reproducible -- --target=<target> --evidence="$RUNNER_TEMP/gorce-s1-evidence/reproducibility.json"`

@@ -6,21 +6,39 @@ TypeScript 6.0.3, Biome 2.2.4, ESM, compiler policy, required commands, and
 native validation targets. `studio-host-gate.v1.yaml` is only the normative
 Task-31 extension-versus-fork decision procedure; it is not an evaluation.
 
-The core target is now the approved S1 TypeScript/Bun workspace. Its exact
+The core target is now the approved S2 TypeScript/Bun workspace. Its exact
 private workspace graph is `packages/core` -> `packages/tui-harness` ->
-`apps/tui-harness`; the only executable product artifact is the argument-free
-`gorce-tui-harness` Bun-compiled hello artifact. S1 is a platform cutover and
-packaging spike, not a terminal-regression product, semantic core, or
-operational TUI.
+`apps/tui-harness`; the only executable product artifact remains the
+argument-free `gorce-tui-harness` Bun-compiled hello artifact. S2 is an
+executable semantic core, not a durable storage layer or terminal UI.
 
-## S1 boundary
+## S2 semantic authority
+
+`@gorce-ai/core` owns independent Session and WorkRun roots, expected-version
+concurrency, immutable versioned command/event/effect/result envelopes, replay,
+and the full effect lifecycle:
+
+```text
+planned -> attempted -> confirmed | failed | unknown -> reconciled | compensated
+```
+
+Unknown is dispatched-but-unconfirmed work. Result affinity independently binds
+`session_id`, `work_run_id`, `effect_id`, `target_authority`, `target_id`,
+`target_version`, `execution_ref`, `stream_generation`, `input_digest`,
+`contract_digest`, `route_digest`, `workspace_id`, and `workspace_revision`.
+
+S3 durable framed storage, fsync/recovery/CAS authority, and S4 headless TUI,
+renderer, terminal, and input behavior are deferred and must not be introduced
+by S2.
+
+## Historical S1 boundary
 
 Cargo, Rust, xtask, the daemon OpenAPI placeholder, and placeholder release
 automation are retired from the active tree. CI and security use Bun only.
 The historical Task-6 verifier still retains Cargo-negative F2 fixtures and
 structural detection so those negative tests remain evidence, not production
-toolchain claims. S1 does not introduce commands, events, sessions, work runs,
-storage, rendering, input, daemon, transport, providers, or satellite code.
+toolchain claims. S2 does not introduce storage, rendering, input, daemon,
+transport, providers, or satellite code.
 
 ## Ownership and isolation
 

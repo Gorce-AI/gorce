@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gorce.ai/schemas/s2-mutation-gate.v2.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "verdict",
+    "command",
+    "threshold",
+    "critical_target_categories",
+    "source_commit",
+    "source_inventory",
+    "mutation_definitions",
+    "runner",
+    "runner_support",
+    "semantic_tests",
+    "targets",
+    "fixtures",
+    "score",
+    "execution",
+    "coverage_claim",
+    "reason"
+  ],
+  "properties": {
+    "schema": { "const": "gorce.s2.mutation-gate/v2" },
+    "verdict": { "enum": ["APPROVED", "CHANGES_REQUESTED"] },
+    "command": { "const": "bun run test:mutation" },
+    "threshold": { "const": 0.9 },
+    "critical_target_categories": {
+      "const": ["reducers", "policy", "compatibility", "persistence", "reconciliation"]
+    },
+    "source_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "source_inventory": {
+      "type": "array",
+      "minItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": { "pattern": "^packages/core/src/[a-z-]+\\.ts$" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "mutation_definitions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "const": "src/verification/mutation-s2-targets.ts" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "runner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "const": "src/verification/mutation-s2.ts" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "runner_support": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "const": "src/verification/mutation-s2-sandbox.ts" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "semantic_tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "const": "tests/s2.test.ts" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "category", "path", "outcome"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "category": {
+            "enum": ["reducers", "policy", "compatibility", "persistence", "reconciliation"]
+          },
+          "path": { "pattern": "^packages/core/src/[a-z-]+\\.ts$" },
+          "outcome": { "enum": ["killed", "survived", "timeout", "infrastructure", "type-error"] }
+        }
+      }
+    },
+    "fixtures": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "expected", "outcome"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "expected": { "enum": ["killed", "survived"] },
+          "outcome": { "enum": ["killed", "survived", "timeout", "infrastructure", "type-error"] }
+        }
+      }
+    },
+    "score": { "type": "number", "minimum": 0, "maximum": 1 },
+    "execution": { "const": "isolated-temporary-copy" },
+    "coverage_claim": { "const": "all declared S2 critical reducer targets" },
+    "reason": { "type": "string", "minLength": 1 }
+  }
+}
