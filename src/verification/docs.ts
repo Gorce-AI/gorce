@@ -12,6 +12,7 @@ const requiredDocuments = [
   "docs/adr/0002-filesystem-first-storage.md",
   "docs/adr/0003-repository-topology.md",
   "docs/adr/0004-s1-cutover.md",
+  "docs/adr/0005-s2-semantic-core.md",
 ] as const
 
 export const verifyDocs = (root: string): VerificationReport => {
@@ -35,7 +36,7 @@ export const verifyDocs = (root: string): VerificationReport => {
       "qa:task",
       "verify:plan-compliance",
       "docs:verify",
-      "verify:s1-cutover",
+      "verify:s2",
       "test:mutation",
       "build:native",
       "verify:native",

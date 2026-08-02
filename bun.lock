@@ -6,6 +6,7 @@
       "name": "@gorce-ai/gorce-core",
       "devDependencies": {
         "@biomejs/biome": "2.2.4",
+        "@gorce-ai/core": "workspace:*",
         "@types/bun": "1.3.14",
         "typescript": "6.0.3",
       },
